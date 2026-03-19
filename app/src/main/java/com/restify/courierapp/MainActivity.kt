@@ -455,7 +455,7 @@ class MainActivity : ComponentActivity() {
                                     coroutineScope.launch {
                                         try {
                                             // Відправляємо запит на зміну статусу
-                                            val response = RetrofitClient.apiService.toggleStatus(currentCookie)
+                                            val response = RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
                                             isOnline = response.isOnline // Глобальний LaunchedEffect сам ввімкне/вимкне GPS
                                         } catch (e: retrofit2.HttpException) {
                                             if (e.code() == 401 || e.code() == 403) {

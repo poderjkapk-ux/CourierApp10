@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.provider.Settings
+import android.util.Log
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -74,7 +75,6 @@ import okhttp3.RequestBody
 import org.json.JSONObject
 import java.io.File
 import java.io.FileOutputStream
-import java.io.InputStream
 import java.text.SimpleDateFormat
 import java.time.Duration
 import java.time.Instant
@@ -617,20 +617,32 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                     isLoading = true
                                     errorMessage = null
                                     try {
-                                        val res = RetrofitClient.apiService.initVerification()
+                                        val res = RetrofitClient.apiService.initVerification(EmptyRequest())
                                         if (res.isSuccessful && res.body() != null) {
                                             verificationToken = res.body()!!.token
-                                            val telegramLink = res.body()!!.link
+                                            var telegramLink = res.body()!!.link
 
-                                            // ЗАЩИТА: Намагаємося відкрити посилання. Якщо Телеграму немає - ловимо помилку!
+                                            Log.d("TG_LINK", "Отримано лінк від сервера: $telegramLink")
+
+                                            // 1. ЗАЩИТА ОТ КРИВОЙ ССЫЛКИ С СЕРВЕРА
+                                            // Если ссылка пришла без протокола, добавляем https://
+                                            if (!telegramLink.startsWith("http") && !telegramLink.startsWith("tg://")) {
+                                                telegramLink = "https://$telegramLink"
+                                            }
+
+                                            // 2. БЕЗОПАСНЫЙ ЗАПУСК ТЕЛЕГРАМА
                                             try {
-                                                context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(telegramLink)))
-                                            } catch (e: android.content.ActivityNotFoundException) {
-                                                errorMessage = "Телеграм не знайдено на пристрої!"
+                                                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramLink))
+                                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK // Обязательно для надежного открытия
+                                                context.startActivity(intent)
+                                            } catch (e: Exception) {
+                                                // Ловим ВООБЩЕ ЛЮБУЮ ошибку (а не только отсутствие Телеграма)
+                                                errorMessage = "Не вдалося відкрити: ${e.localizedMessage}"
                                                 isLoading = false
                                                 return@launch
                                             }
 
+                                            // 3. ПИНГУЕМ СЕРВЕР, ПОКА ПОЛЬЗОВАТЕЛЬ В ТЕЛЕГРАМЕ
                                             while (!isPhoneVerified) {
                                                 delay(3000)
                                                 val check = RetrofitClient.apiService.checkVerification(verificationToken!!)
@@ -644,7 +656,6 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                             errorMessage = "Помилка сервера: ${res.code()}"
                                         }
                                     } catch (e: Exception) {
-                                        // ТЕПЕР МИ ПОБАЧИМО РЕАЛЬНУ ПОМИЛКУ НА ЕКРАНІ
                                         errorMessage = "Сбой: ${e.localizedMessage ?: e.javaClass.simpleName}"
                                     } finally {
                                         isLoading = false

@@ -214,11 +214,11 @@ interface ApiService {
         @Field("token") token: String
     ): StatusResponse
 
-    // ВИПРАВЛЕНО: Використовуємо EmptyRequest замість Any
+    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @POST("/api/courier/toggle_status")
     suspend fun toggleStatus(
         @Header("Cookie") cookie: String,
-        @Body empty: EmptyRequest = EmptyRequest()
+        @Body empty: EmptyRequest
     ): ToggleResponse
 
     @GET("/api/chat/history/{job_id}")
@@ -227,13 +227,14 @@ interface ApiService {
         @Path("job_id") jobId: Int
     ): List<ChatMessage>
 
+    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @FormUrlEncoded
     @POST("/api/chat/send")
     suspend fun sendChatMessage(
         @Header("Cookie") cookie: String,
         @Field("job_id") jobId: Int,
         @Field("message") message: String,
-        @Field("role") role: String = "courier"
+        @Field("role") role: String
     ): SendMessageResponse
 
     @GET("/api/courier/history")
@@ -246,10 +247,10 @@ interface ApiService {
         @Header("Cookie") cookie: String
     ): CourierProfile
 
-    // ВИПРАВЛЕНО: Використовуємо EmptyRequest замість Any
+    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @POST("/api/auth/init_verification")
     suspend fun initVerification(
-        @Body empty: EmptyRequest = EmptyRequest()
+        @Body empty: EmptyRequest
     ): retrofit2.Response<VerificationInitResponse>
 
     @GET("/api/auth/check_verification/{token}")
