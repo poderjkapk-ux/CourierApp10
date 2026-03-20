@@ -735,19 +735,37 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
 
                                             Log.d("TG_LINK", "Отримано лінк від сервера: $telegramLink")
 
-                                            // 1. ЗАЩИТА ОТ КРИВОЙ ССЫЛКИ С СЕРВЕРА
-                                            if (!telegramLink.startsWith("http") && !telegramLink.startsWith("tg://")) {
-                                                telegramLink = "https://$telegramLink"
+                                            // 1. ПРЕОБРАЗОВАНИЕ В ПРЯМОЙ DEEPLINK (tg://) ДЛЯ ОБХОДА БРАУЗЕРА
+                                            if (telegramLink.contains("t.me/")) {
+                                                val path = telegramLink.substringAfter("t.me/")
+                                                val parts = path.split("?")
+                                                val botUsername = parts[0].replace("/", "") // Имя бота
+                                                val startParam = if (parts.size > 1) "&${parts[1]}" else "" // Токен (например &start=123)
+
+                                                telegramLink = "tg://resolve?domain=$botUsername$startParam"
+                                            } else if (!telegramLink.startsWith("http") && !telegramLink.startsWith("tg://")) {
+                                                telegramLink = "tg://resolve?domain=$telegramLink" // Если пришло просто имя
                                             }
 
-                                            // 2. БЕЗОПАСНЫЙ ЗАПУСК ТЕЛЕГРАМА
+                                            Log.d("TG_LINK", "Конвертированный линк: $telegramLink")
+
+                                            // 2. БЕЗОПАСНЫЙ И ПРЯМОЙ ЗАПУСК ТЕЛЕГРАМА
                                             try {
                                                 val intent = Intent(Intent.ACTION_VIEW, Uri.parse(telegramLink))
-                                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK // Обязательно для надежного открытия
-                                                context.startActivity(intent)
+                                                intent.flags = Intent.FLAG_ACTIVITY_NEW_TASK
+
+                                                try {
+                                                    // Жестко направляем в официальный клиент Telegram
+                                                    intent.setPackage("org.telegram.messenger")
+                                                    context.startActivity(intent)
+                                                } catch (e: Exception) {
+                                                    // Если официального клиента нет (может быть установлен Telegram X или Bgram),
+                                                    // убираем жесткую привязку к пакету и пытаемся открыть через общий обработчик tg://
+                                                    intent.setPackage(null)
+                                                    context.startActivity(intent)
+                                                }
                                             } catch (e: Exception) {
-                                                // Ловим ВООБЩЕ ЛЮБУЮ ошибку (а не только отсутствие Телеграма)
-                                                errorMessage = "Не вдалося відкрити: ${e.localizedMessage}"
+                                                errorMessage = "Не вдалося відкрити Telegram. Перевірте, чи встановлено додаток."
                                                 isLoading = false
                                                 return@launch
                                             }
