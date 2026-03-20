@@ -771,14 +771,30 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                             }
 
                                             // 3. ПИНГУЕМ СЕРВЕР, ПОКА ПОЛЬЗОВАТЕЛЬ В ТЕЛЕГРАМЕ
-                                            while (!isPhoneVerified) {
+                                            var attempts = 0
+                                            val maxAttempts = 100 // Ограничиваем опрос ~5 минутами (100 попыток по 3 сек)
+
+                                            while (!isPhoneVerified && attempts < maxAttempts) {
                                                 delay(3000)
-                                                val check = RetrofitClient.apiService.checkVerification(verificationToken!!)
-                                                if (check.isSuccessful && check.body()?.status == "verified") {
-                                                    isPhoneVerified = true
-                                                    phoneFromServer = check.body()?.phone ?: ""
-                                                    break
+                                                attempts++
+
+                                                try {
+                                                    val check = RetrofitClient.apiService.checkVerification(verificationToken!!)
+                                                    if (check.isSuccessful && check.body()?.status == "verified") {
+                                                        isPhoneVerified = true
+                                                        phoneFromServer = check.body()?.phone ?: ""
+                                                        break
+                                                    }
+                                                } catch (e: Exception) {
+                                                    // Игнорируем кратковременные ошибки сети при переключении приложений.
+                                                    // Цикл просто пойдет на следующую итерацию.
+                                                    Log.w("TG_VERIFICATION", "Помилка мережі під час перевірки, продовжуємо: ${e.message}")
                                                 }
+                                            }
+
+                                            // Если после возврата из цикла статус всё еще не подтвержден
+                                            if (!isPhoneVerified && attempts >= maxAttempts) {
+                                                errorMessage = "Час очікування вийшов. Спробуйте ще раз."
                                             }
                                         } else {
                                             errorMessage = "Помилка сервера: ${res.code()}"
