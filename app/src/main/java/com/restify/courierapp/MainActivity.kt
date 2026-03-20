@@ -103,15 +103,35 @@ class MainActivity : ComponentActivity() {
                     // ГЛОБАЛЬНА ЗМІННА СТАТУСУ: Тепер статус не втрачається при переходах!
                     var isOnline by rememberSaveable { mutableStateOf(false) }
 
-                    // --- Глобальна функція для примусового логауту при помилці 401 ---
-                    fun forceLogout() {
-                        coroutineScope.launch(Dispatchers.Main) {
-                            sharedPref.edit().remove("cookie").apply()
-                            RetrofitClient.webSocketManager.disconnect()
-                            stopService(Intent(this@MainActivity, LocationTracker::class.java))
-                            Toast.makeText(this@MainActivity, "Сесія закінчилась, увійдіть знову", Toast.LENGTH_LONG).show()
-                            navController.navigate("login") {
-                                popUpTo(0) { inclusive = true }
+                    // --- Глобальна функція для примусового логауту або виходу з акаунту ---
+                    fun forceLogout(isExplicitLogout: Boolean = false) {
+                        coroutineScope.launch(Dispatchers.IO) {
+                            val currentCookie = sharedPref.getString("cookie", null)
+
+                            // Якщо курьєр натиснув "Вийти" і він зараз онлайн — перемикаємо статус на сервері
+                            if (isExplicitLogout && currentCookie != null && isOnline) {
+                                try {
+                                    RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
+                                } catch (e: Exception) {
+                                    Log.e("Logout", "Не вдалося переключити статус на бекенді")
+                                }
+                            }
+
+                            // Повертаємось у головний потік для оновлення UI
+                            launch(Dispatchers.Main) {
+                                isOnline = false // Обов'язково скидаємо локальний стан!
+                                sharedPref.edit().remove("cookie").apply()
+                                RetrofitClient.webSocketManager.disconnect()
+                                stopService(Intent(this@MainActivity, LocationTracker::class.java))
+
+                                // Показуємо тост тільки якщо це викид (наприклад, 401), а не добровільний вихід
+                                if (!isExplicitLogout) {
+                                    Toast.makeText(this@MainActivity, "Сесія закінчилась, увійдіть знову", Toast.LENGTH_LONG).show()
+                                }
+
+                                navController.navigate("login") {
+                                    popUpTo(0) { inclusive = true }
+                                }
                             }
                         }
                     }
@@ -219,9 +239,28 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    val startDestination = if (savedCookie != null) "orders" else "login"
+                    // Визначаємо стартовий екран з урахуванням онбордингу
+                    val startDestination = if (isFirstLaunch()) {
+                        "onboarding"
+                    } else if (savedCookie != null) {
+                        "orders"
+                    } else {
+                        "login"
+                    }
 
                     NavHost(navController = navController, startDestination = startDestination) {
+
+                        // РОУТ 0: ОНБОРДИНГ
+                        composable("onboarding") {
+                            OnboardingScreen(
+                                onFinish = {
+                                    setFirstLaunchCompleted()
+                                    navController.navigate("login") {
+                                        popUpTo("onboarding") { inclusive = true }
+                                    }
+                                }
+                            )
+                        }
 
                         // РОУТ 1: ЛОГІН
                         composable("login") {
@@ -313,7 +352,6 @@ class MainActivity : ComponentActivity() {
                             var isGpsEnabled by remember { mutableStateOf(true) }
 
                             // параметри для "тихого" оновлення
-                            // ФУНКЦІЯ ПІДНЯТА ВГОРУ, щоб її бачив LifecycleEventObserver
                             fun fetchData(isSilent: Boolean = false) {
                                 if (!isSilent) isLoading = true
                                 coroutineScope.launch {
@@ -333,7 +371,7 @@ class MainActivity : ComponentActivity() {
                                             Log.e("Announcements", "Failed to load announcements: ${e.message}")
                                         }
 
-                                        // Отримуємо реальні координати (замість нулів - Центр Одеси)
+                                        // Отримуємо реальні координати
                                         var currentLat = 46.4825
                                         var currentLon = 30.7233
 
@@ -341,7 +379,6 @@ class MainActivity : ComponentActivity() {
                                             val location = getLastKnownLocation()
                                             if (location != null) {
                                                 // --- ЗАХИСТ ВІД РЕБ (GPS SPOOFING) ---
-                                                // Одеська область приблизно в межах Lat 45.0 - 48.0 та Lon 29.0 - 32.0
                                                 if (location.latitude > 45.0 && location.latitude < 48.0 && location.longitude > 29.0 && location.longitude < 32.0) {
                                                     currentLat = location.latitude
                                                     currentLon = location.longitude
@@ -374,14 +411,12 @@ class MainActivity : ComponentActivity() {
                             DisposableEffect(lifecycleOwner) {
                                 val observer = LifecycleEventObserver { _, event ->
                                     if (event == Lifecycle.Event.ON_RESUME) {
-                                        // ВИПРАВЛЕНО: Більш точна перевірка для сучасних Android (враховує економію енергії)
                                         isGpsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
                                             locationManager.isLocationEnabled
                                         } else {
                                             locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
                                                     locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
                                         }
-                                        // ДОДАНО: Примусове оновлення при розгортанні
                                         fetchData(isSilent = true)
                                     }
                                 }
@@ -394,7 +429,7 @@ class MainActivity : ComponentActivity() {
                                 coroutineScope.launch {
                                     try {
                                         val profile = RetrofitClient.apiService.getProfile(currentCookie)
-                                        isOnline = profile.isOnline // Це автоматично запустить/зупинить LocationTracker через глобальний LaunchedEffect
+                                        isOnline = profile.isOnline // Це автоматично запустить/зупинить LocationTracker
                                     } catch (e: retrofit2.HttpException) {
                                         if (e.code() == 401 || e.code() == 403) forceLogout()
                                     } catch (e: Exception) {
@@ -440,9 +475,7 @@ class MainActivity : ComponentActivity() {
                                     navController.navigate("profile") // Перехід на екран профілю
                                 },
                                 onDismissAnnouncement = { annId ->
-                                    // Оптимістичне оновлення UI (одразу приховуємо оголошення)
                                     announcementsList = announcementsList.filter { it.id != annId }
-                                    // Відправляємо запит на бекенд у фоні
                                     coroutineScope.launch {
                                         try {
                                             RetrofitClient.apiService.dismissAnnouncement(currentCookie, annId)
@@ -451,12 +484,11 @@ class MainActivity : ComponentActivity() {
                                         }
                                     }
                                 },
-                                onToggleStatus = { _ -> // Ігноруємо UI статус, довіряємо бекенду
+                                onToggleStatus = { _ ->
                                     coroutineScope.launch {
                                         try {
-                                            // Відправляємо запит на зміну статусу
                                             val response = RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
-                                            isOnline = response.isOnline // Глобальний LaunchedEffect сам ввімкне/вимкне GPS
+                                            isOnline = response.isOnline
                                         } catch (e: retrofit2.HttpException) {
                                             if (e.code() == 401 || e.code() == 403) {
                                                 forceLogout()
@@ -476,14 +508,12 @@ class MainActivity : ComponentActivity() {
                                             if (res.isSuccessful) {
                                                 fetchData(isSilent = false)
                                             } else {
-                                                // Замовлення вже забрали, сервер повернув помилку
                                                 Toast.makeText(this@MainActivity, "Замовлення вже забрали", Toast.LENGTH_LONG).show()
                                                 fetchData(isSilent = false)
                                             }
                                         } catch (e: Exception) {
                                             Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
                                         } finally {
-                                            // зупиняємо крутилку в будь-якому випадку (навіть при помилці)
                                             onComplete()
                                         }
                                     }
@@ -508,7 +538,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // ДОДАНО: Спостерігач за життєвим циклом для екрану активного замовлення
                             val lifecycleOwner = LocalLifecycleOwner.current
                             DisposableEffect(lifecycleOwner) {
                                 val observer = LifecycleEventObserver { _, event ->
@@ -610,12 +639,23 @@ class MainActivity : ComponentActivity() {
                                 profile = profileData,
                                 isLoading = isLoading,
                                 onBack = { navController.popBackStack() },
-                                onLogout = { forceLogout() }
+                                onLogout = { forceLogout(isExplicitLogout = true) }
                             )
                         }
                     }
                 }
             }
         }
+    }
+
+    // --- ФУНКЦІЇ ДЛЯ КОНТРОЛЮ ПЕРШОГО ЗАПУСКУ (ОНБОРДИНГ) ---
+    private fun isFirstLaunch(): Boolean {
+        val sharedPreferences = getSharedPreferences("CourierPrefs", Context.MODE_PRIVATE)
+        return sharedPreferences.getBoolean("isFirstLaunch", true)
+    }
+
+    private fun setFirstLaunchCompleted() {
+        val sharedPreferences = getSharedPreferences("CourierPrefs", Context.MODE_PRIVATE)
+        sharedPreferences.edit().putBoolean("isFirstLaunch", false).apply()
     }
 }

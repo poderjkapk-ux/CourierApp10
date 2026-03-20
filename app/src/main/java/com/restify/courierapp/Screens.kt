@@ -29,21 +29,21 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.Add
-import androidx.compose.material.icons.filled.ArrowBack
-import androidx.compose.material.icons.filled.ArrowForward
-import androidx.compose.material.icons.filled.Call
-import androidx.compose.material.icons.filled.Close
-import androidx.compose.material.icons.filled.DateRange
-import androidx.compose.material.icons.filled.Home
-import androidx.compose.material.icons.filled.Info
-import androidx.compose.material.icons.filled.KeyboardArrowDown
-import androidx.compose.material.icons.filled.KeyboardArrowUp
-import androidx.compose.material.icons.filled.LocationOn
-import androidx.compose.material.icons.filled.Person
-import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.Send
-import androidx.compose.material.icons.filled.Warning
+import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.ArrowForward
+import androidx.compose.material.icons.rounded.Call
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DateRange
+import androidx.compose.material.icons.rounded.Home
+import androidx.compose.material.icons.rounded.Info
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowUp
+import androidx.compose.material.icons.rounded.LocationOn
+import androidx.compose.material.icons.rounded.Person
+import androidx.compose.material.icons.rounded.Refresh
+import androidx.compose.material.icons.rounded.Send
+import androidx.compose.material.icons.rounded.Warning
 import androidx.compose.material.icons.outlined.Info
 import androidx.compose.material.icons.rounded.CheckCircle
 import androidx.compose.material.icons.rounded.Place
@@ -285,12 +285,122 @@ fun StepTimer(
         contentAlignment = Alignment.Center
     ) {
         Text(
-            text = "⏱ $durationText",
+            text = "⏳ $durationText",
             color = textColor,
             fontSize = 12.sp,
             fontWeight = FontWeight.Black,
             letterSpacing = 1.sp
         )
+    }
+}
+
+// --- КОМПАКТНЫЙ ТАЙМЕР ДЛЯ СПИСКА ЗАКАЗОВ ---
+@Composable
+fun ReadinessBadge(readyAtIso: String?, isReady: Boolean, modifier: Modifier = Modifier) {
+    if (isReady) {
+        Box(modifier = modifier.background(AppColors.Secondary.copy(alpha = 0.15f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)) {
+            Text("✨ Вже готово", color = AppColors.Secondary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+        }
+        return
+    }
+    if (readyAtIso.isNullOrEmpty()) return
+
+    var timeDiff by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(readyAtIso) {
+        while (true) {
+            try {
+                val readyInstant = Instant.parse(readyAtIso)
+                val now = Instant.now()
+                timeDiff = Duration.between(now, readyInstant).seconds
+            } catch (e: Exception) {}
+            delay(1000L)
+        }
+    }
+
+    val isLate = timeDiff < 0
+    val absDiff = kotlin.math.abs(timeDiff)
+    val m = absDiff / 60
+    val s = absDiff % 60
+    val timeString = String.format("%02d:%02d", m, s)
+
+    val bgColor = if (isLate) AppColors.Error.copy(alpha = 0.15f) else if (m < 5) AppColors.Warning.copy(alpha = 0.15f) else AppColors.Primary.copy(alpha = 0.1f)
+    val textColor = if (isLate) AppColors.Error else if (m < 5) Color(0xFFB45309) else AppColors.Primary
+    val icon = if (isLate) "🚨" else if (m < 5) "🟠" else "🕰️"
+    val textPrefix = if (isLate) "Запізнення" else if (m < 5) "Майже готово" else "Готується"
+
+    Box(
+        modifier = modifier
+            .background(bgColor, RoundedCornerShape(8.dp))
+            .padding(horizontal = 10.dp, vertical = 6.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(icon, fontSize = 14.sp)
+            Spacer(modifier = Modifier.width(6.dp))
+            Text(
+                text = "$textPrefix $timeString",
+                color = textColor,
+                fontWeight = FontWeight.Bold,
+                fontSize = 13.sp
+            )
+        }
+    }
+}
+
+// --- БОЛЬШОЙ ТАЙМЕР ДЛЯ АКТИВНОГО ЗАКАЗА ---
+@Composable
+fun LargeReadinessTimer(readyAtIso: String?) {
+    if (readyAtIso.isNullOrEmpty()) return
+
+    var timeDiff by remember { mutableLongStateOf(0L) }
+
+    LaunchedEffect(readyAtIso) {
+        while (true) {
+            try {
+                val readyInstant = Instant.parse(readyAtIso)
+                val now = Instant.now()
+                timeDiff = Duration.between(now, readyInstant).seconds
+            } catch (e: Exception) {}
+            delay(1000L)
+        }
+    }
+
+    val isLate = timeDiff < 0
+    val absDiff = kotlin.math.abs(timeDiff)
+    val m = absDiff / 60
+    val s = absDiff % 60
+    val timeString = String.format("%02d:%02d", m, s)
+
+    val bgColor = if (isLate) AppColors.Error else AppColors.Primary
+    val titleText = if (isLate) "ЗАКЛАД ЗАТРИМУЄ ВИДАЧУ" else "ОЧІКУВАНИЙ ЧАС ВИДАЧІ"
+    val subtitleText = if (isLate) "Замовлення вже мало бути готовим" else "Ресторан ще готує страви"
+
+    Box(modifier = Modifier
+        .fillMaxWidth()
+        .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = bgColor.copy(alpha = 0.4f))
+        .background(Brush.horizontalGradient(listOf(bgColor, bgColor.copy(alpha = 0.8f))), RoundedCornerShape(20.dp))
+        .padding(20.dp)
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                modifier = Modifier.size(56.dp).background(Color.White.copy(alpha = 0.2f), CircleShape),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(if (isLate) Icons.Rounded.Warning else Icons.Rounded.Info, contentDescription = null, tint = Color.White, modifier = Modifier.size(32.dp))
+            }
+            Spacer(modifier = Modifier.width(16.dp))
+            Column(modifier = Modifier.weight(1f)) {
+                Text(titleText, fontWeight = FontWeight.Black, color = Color.White, fontSize = 13.sp, letterSpacing = 0.5.sp)
+                Spacer(modifier = Modifier.height(2.dp))
+                Text(subtitleText, color = Color.White.copy(alpha = 0.9f), fontSize = 13.sp, fontWeight = FontWeight.Medium)
+            }
+            Text(
+                text = "${if(isLate) "-" else ""}$timeString",
+                fontWeight = FontWeight.Black,
+                fontSize = 28.sp,
+                color = Color.White
+            )
+        }
     }
 }
 
@@ -305,10 +415,10 @@ fun AnnouncementCard(
 ) {
     // Мапінг стилів з бекенду на кольори та іконки
     val (bgColor, contentColor, icon) = when (announcement.style) {
-        "danger" -> Triple(AppColors.Error.copy(alpha = 0.15f), AppColors.Error, Icons.Default.Warning)
-        "warning" -> Triple(AppColors.Warning.copy(alpha = 0.15f), Color(0xFFB45309), Icons.Default.Warning)
+        "danger" -> Triple(AppColors.Error.copy(alpha = 0.15f), AppColors.Error, Icons.Rounded.Warning)
+        "warning" -> Triple(AppColors.Warning.copy(alpha = 0.15f), Color(0xFFB45309), Icons.Rounded.Warning)
         "success" -> Triple(AppColors.Secondary.copy(alpha = 0.15f), AppColors.Secondary, Icons.Rounded.CheckCircle)
-        else -> Triple(AppColors.Info.copy(alpha = 0.15f), AppColors.Info, Icons.Default.Info) // info за замовчуванням
+        else -> Triple(AppColors.Info.copy(alpha = 0.15f), AppColors.Info, Icons.Rounded.Info) // info за замовчуванням
     }
 
     Card(
@@ -351,7 +461,7 @@ fun AnnouncementCard(
                 modifier = Modifier.size(24.dp)
             ) {
                 Icon(
-                    imageVector = Icons.Default.Close,
+                    imageVector = Icons.Rounded.Close,
                     contentDescription = "Закрити",
                     tint = contentColor.copy(alpha = 0.7f)
                 )
@@ -432,7 +542,7 @@ fun LoginScreen(
                 }
 
                 Spacer(modifier = Modifier.height(36.dp))
-                ModernButton(text = "Увійти", onClick = { onLoginClick(phone, password) }, modifier = Modifier.fillMaxWidth(), isLoading = isLoading, enabled = phone.isNotBlank() && password.isNotBlank(), icon = Icons.Default.ArrowForward)
+                ModernButton(text = "Увійти", onClick = { onLoginClick(phone, password) }, modifier = Modifier.fillMaxWidth(), isLoading = isLoading, enabled = phone.isNotBlank() && password.isNotBlank(), icon = Icons.Rounded.ArrowForward)
 
                 // --- КНОПКА ЗАБУЛИ ПАРОЛЬ ---
                 Spacer(modifier = Modifier.height(16.dp))
@@ -478,7 +588,7 @@ fun LoginScreen(
                 Button(
                     onClick = {
                         if (resetPhone.isBlank()) {
-                            resetMessage = "❌ Введіть номер телефону"
+                            resetMessage = "⚠️ Введіть номер телефону"
                             isResetSuccess = false
                             return@Button
                         }
@@ -489,7 +599,7 @@ fun LoginScreen(
                                 val res = RetrofitClient.apiService.resetCourierPassword(resetPhone)
                                 if (res.isSuccessful) {
                                     isResetSuccess = true
-                                    resetMessage = "✅ Новий пароль надіслано в Telegram!"
+                                    resetMessage = "✨ Новий пароль надіслано в Telegram!"
                                     delay(3000)
                                     showResetDialog = false
                                     resetMessage = null
@@ -498,11 +608,11 @@ fun LoginScreen(
                                     isResetSuccess = false
                                     val errorBody = res.errorBody()?.string()
                                     val detail = try { JSONObject(errorBody ?: "").getString("detail") } catch (e: Exception) { "Помилка скидання" }
-                                    resetMessage = "❌ $detail"
+                                    resetMessage = "⚠️ $detail"
                                 }
                             } catch (e: Exception) {
                                 isResetSuccess = false
-                                resetMessage = "❌ Помилка мережі"
+                                resetMessage = "⚠️ Помилка мережі"
                             } finally {
                                 isResetLoading = false
                             }
@@ -530,7 +640,7 @@ fun LoginScreen(
 }
 
 // ==========================================
-// 1.5. ЕКРАН РЕЄСТРАЦІЇ
+// 1.5. ЕКРАН РЕЄСТРАЦІЇ (ІЗ БЕЗПЕЧНИМ ВІДКРИТТЯМ TG З APP10)
 // ==========================================
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -560,7 +670,7 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                 title = { Text("Стати кур'єром", fontWeight = FontWeight.Bold, color = AppColors.TextPrimary) },
                 navigationIcon = {
                     IconButton(onClick = onBackToLogin) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
+                        Icon(Icons.Rounded.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Background)
@@ -602,7 +712,7 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                     elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
                 ) {
                     Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                        Icon(Icons.Default.Call, null, modifier = Modifier.size(48.dp), tint = AppColors.Primary)
+                        Icon(Icons.Rounded.Call, null, modifier = Modifier.size(48.dp), tint = AppColors.Primary)
                         Spacer(modifier = Modifier.height(16.dp))
                         Text("Підтвердження номеру", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = AppColors.TextPrimary)
                         Spacer(modifier = Modifier.height(8.dp))
@@ -617,6 +727,7 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                     isLoading = true
                                     errorMessage = null
                                     try {
+                                        // ВИПРАВЛЕНО: Використовуємо EmptyRequest(), як було в надійній версії App10
                                         val res = RetrofitClient.apiService.initVerification(EmptyRequest())
                                         if (res.isSuccessful && res.body() != null) {
                                             verificationToken = res.body()!!.token
@@ -625,7 +736,6 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                             Log.d("TG_LINK", "Отримано лінк від сервера: $telegramLink")
 
                                             // 1. ЗАЩИТА ОТ КРИВОЙ ССЫЛКИ С СЕРВЕРА
-                                            // Если ссылка пришла без протокола, добавляем https://
                                             if (!telegramLink.startsWith("http") && !telegramLink.startsWith("tg://")) {
                                                 telegramLink = "https://$telegramLink"
                                             }
@@ -706,7 +816,7 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(if (documentUri != null) Icons.Rounded.CheckCircle else Icons.Default.Add, contentDescription = null, tint = if (documentUri != null) AppColors.Secondary else Color.Gray)
+                        Icon(if (documentUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.Add, contentDescription = null, tint = if (documentUri != null) AppColors.Secondary else Color.Gray)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("Фото ID/Паспорт", fontSize = 12.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
                     }
@@ -719,7 +829,7 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                         verticalArrangement = Arrangement.Center,
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
-                        Icon(if (selfieUri != null) Icons.Rounded.CheckCircle else Icons.Default.Person, contentDescription = null, tint = if (selfieUri != null) AppColors.Secondary else Color.Gray)
+                        Icon(if (selfieUri != null) Icons.Rounded.CheckCircle else Icons.Rounded.Person, contentDescription = null, tint = if (selfieUri != null) AppColors.Secondary else Color.Gray)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("Ваше Селфі", fontSize = 12.sp, textAlign = TextAlign.Center, fontWeight = FontWeight.Medium, color = AppColors.TextPrimary)
                     }
@@ -824,10 +934,10 @@ fun OrdersListScreen(
                     CurrentTimeDisplay()
                     Spacer(modifier = Modifier.width(8.dp))
                     IconButton(onClick = onNavigateToHistory) {
-                        Icon(Icons.Default.DateRange, contentDescription = "Історія", tint = AppColors.Primary)
+                        Icon(Icons.Rounded.DateRange, contentDescription = "Історія", tint = AppColors.Primary)
                     }
                     IconButton(onClick = onNavigateToProfile) {
-                        Icon(Icons.Default.Person, contentDescription = "Профіль", tint = AppColors.Primary)
+                        Icon(Icons.Rounded.Person, contentDescription = "Профіль", tint = AppColors.Primary)
                     }
                     Card(
                         shape = RoundedCornerShape(50),
@@ -865,7 +975,7 @@ fun OrdersListScreen(
                         Spacer(modifier = Modifier.width(12.dp))
                         Column(modifier = Modifier.weight(1f)) {
                             Text("Геолокацію вимкнено", fontWeight = FontWeight.Bold, fontSize = 16.sp, color = AppColors.TextPrimary)
-                            Text("Увімкніть GPS, щоб бачити реальну відстань до замовлень, а не 5000 км 😉", fontSize = 13.sp, color = AppColors.TextSecondary, lineHeight = 16.sp)
+                            Text("Увімкніть GPS, щоб бачити реальну відстань до замовлень, а не 5000 км 🙌", fontSize = 13.sp, color = AppColors.TextSecondary, lineHeight = 16.sp)
                         }
                         Spacer(modifier = Modifier.width(12.dp))
                         Button(
@@ -928,10 +1038,10 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
     var expanded by remember { mutableStateOf(false) }
 
     val paymentInfo = when (order.paymentType) {
-        "prepaid" -> Pair("✅ Оплачено", AppColors.Secondary)
-        "buyout_paid" -> Pair("✅ Оплачено", AppColors.Secondary)
-        "cash" -> Pair("💵 Готівка", AppColors.Warning)
-        "buyout" -> Pair("💰 Викуп", AppColors.Error)
+        "prepaid" -> Pair("✨ Оплачено", AppColors.Secondary)
+        "buyout_paid" -> Pair("✨ Оплачено", AppColors.Secondary)
+        "cash" -> Pair("💸 Готівка", AppColors.Warning)
+        "buyout" -> Pair("💳 Викуп", AppColors.Error)
         else -> Pair(order.paymentType, AppColors.Primary)
     }
 
@@ -975,18 +1085,25 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
 
                 if (order.distToRest != null) {
                     Box(modifier = Modifier.background(AppColors.Primary.copy(alpha = 0.08f), RoundedCornerShape(8.dp)).padding(horizontal = 10.dp, vertical = 6.dp)) {
-                        Text("🏃 ~${order.distToRest} км", color = AppColors.Primary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                        Text("🛵 ~${order.distToRest} км", color = AppColors.Primary, fontWeight = FontWeight.Bold, fontSize = 13.sp)
                     }
                 }
 
                 Spacer(modifier = Modifier.weight(1f))
 
                 Icon(
-                    imageVector = if (expanded) Icons.Default.KeyboardArrowUp else Icons.Default.KeyboardArrowDown,
+                    imageVector = if (expanded) Icons.Rounded.KeyboardArrowUp else Icons.Rounded.KeyboardArrowDown,
                     contentDescription = if (expanded) "Згорнути" else "Розгорнути",
                     tint = AppColors.TextSecondary
                 )
             }
+
+            // --- ДОДАНО ТАЙМЕР ---
+            if (order.readyAt != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                ReadinessBadge(readyAtIso = order.readyAt, isReady = false)
+            }
+            // ---------------------
 
             // ДЕТАЛЬНА ЧАСТИНА (ВІДЧИНЯЄТЬСЯ)
             if (expanded) {
@@ -1005,16 +1122,16 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
                     Spacer(modifier = Modifier.height(16.dp))
                 }
 
-                AddressItem(icon = Icons.Default.LocationOn, text = order.restaurantAddress, label = "Забрати")
+                AddressItem(icon = Icons.Rounded.LocationOn, text = order.restaurantAddress, label = "Забрати")
 
                 Box(modifier = Modifier.padding(start = 19.dp, top = 6.dp, bottom = 6.dp).height(20.dp).width(2.dp).background(Color.LightGray.copy(alpha = 0.5f)))
 
-                AddressItem(icon = Icons.Default.Home, text = order.dropoffAddress, label = "Доставити")
+                AddressItem(icon = Icons.Rounded.Home, text = order.dropoffAddress, label = "Доставити")
 
                 if (!order.comment.isNullOrEmpty()) {
                     Spacer(modifier = Modifier.height(16.dp))
                     Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFF7ED), RoundedCornerShape(12.dp)).padding(12.dp)) {
-                        Text("Коментар: ${order.comment}", fontSize = 14.sp, color = Color(0xFFC2410C), fontWeight = FontWeight.Medium)
+                        Text("📝 Коментар: ${order.comment}", fontSize = 14.sp, color = Color(0xFFC2410C), fontWeight = FontWeight.Medium)
                     }
                 }
 
@@ -1022,7 +1139,7 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     if (order.distTrip != null) {
-                        Text("📍 Маршрут: ~${order.distTrip} км", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary, modifier = Modifier.weight(1f))
+                        Text("🧭 Маршрут: ~${order.distTrip} км", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary, modifier = Modifier.weight(1f))
                     } else {
                         Spacer(modifier = Modifier.weight(1f))
                     }
@@ -1088,7 +1205,7 @@ fun ActiveOrderScreen(
                             onClick = onRefresh,
                             modifier = Modifier.padding(end = 8.dp).background(AppColors.Primary.copy(alpha = 0.05f), CircleShape)
                         ) {
-                            Icon(Icons.Default.Refresh, "Оновити", tint = AppColors.Primary)
+                            Icon(Icons.Rounded.Refresh, "Оновити", tint = AppColors.Primary)
                         }
                     }
                 )
@@ -1237,6 +1354,12 @@ fun OrderDetailsView(
                             }
                         }
                     }
+                } else if (isStep1Active && !job.readyAt.isNullOrEmpty()) {
+                    // --- ДОДАНО ВЕЛИКИЙ ТАЙМЕР ---
+                    item {
+                        LargeReadinessTimer(job.readyAt)
+                    }
+                    // -----------------------------
                 }
 
                 // --- ФІНАНСИ ТА ОПЛАТА ---
@@ -1263,10 +1386,10 @@ fun OrderDetailsView(
 
                             // --- ВИПРАВЛЕНО: ТЕКСТИ ДЛЯ ВИКУПУ ---
                             val paymentInfo = when (job.paymentType) {
-                                "prepaid" -> Pair("✅ ОПЛАЧЕНО (Гроші не беремо)", AppColors.Secondary)
-                                "buyout_paid" -> Pair("✅ ОПЛАЧЕНО В ЗАКЛАДі (Свої гроші: ${job.orderPrice} ₴)", AppColors.Secondary)
-                                "cash" -> Pair("💵 ГОТІВКА (Взяти ${job.orderPrice} ₴)", AppColors.Warning)
-                                "buyout" -> Pair("💰 ЗАБЕРІТЬ У КЛІЄНТА: ${job.orderPrice} ₴ (Свої гроші)", AppColors.Error)
+                                "prepaid" -> Pair("✨ ОПЛАЧЕНО (Гроші не беремо)", AppColors.Secondary)
+                                "buyout_paid" -> Pair("✨ ОПЛАЧЕНО В ЗАКЛАДі (Свої гроші: ${job.orderPrice} ₴)", AppColors.Secondary)
+                                "cash" -> Pair("💸 ГОТІВКА (Взяти ${job.orderPrice} ₴)", AppColors.Warning)
+                                "buyout" -> Pair("💳 ЗАБЕРІТЬ У КЛІЄНТА: ${job.orderPrice} ₴ (Свої гроші)", AppColors.Error)
                                 else -> Pair("Оплата: ${job.paymentType}", AppColors.Primary)
                             }
 
@@ -1276,7 +1399,7 @@ fun OrderDetailsView(
 
                             if (!job.comment.isNullOrEmpty()) {
                                 Box(modifier = Modifier.fillMaxWidth().background(Color(0xFFFFF7ED)).padding(16.dp)) {
-                                    Text("💬 Коментар: ${job.comment}", fontSize = 15.sp, color = Color(0xFFC2410C), fontWeight = FontWeight.SemiBold)
+                                    Text("📝 Коментар: ${job.comment}", fontSize = 15.sp, color = Color(0xFFC2410C), fontWeight = FontWeight.SemiBold)
                                 }
                             }
                         }
@@ -1311,7 +1434,7 @@ fun OrderDetailsView(
                             }
 
                             Spacer(modifier = Modifier.height(20.dp))
-                            AddressItem(icon = Icons.Default.LocationOn, text = job.partnerAddress)
+                            AddressItem(icon = Icons.Rounded.LocationOn, text = job.partnerAddress)
 
                             Row(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedButton(
@@ -1336,7 +1459,7 @@ fun OrderDetailsView(
                                         }
                                     ) {
                                         Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                            Icon(Icons.Default.Call, contentDescription = "Call", tint = AppColors.Primary, modifier = Modifier.size(24.dp))
+                                            Icon(Icons.Rounded.Call, contentDescription = "Call", tint = AppColors.Primary, modifier = Modifier.size(24.dp))
                                         }
                                     }
                                 }
@@ -1373,7 +1496,7 @@ fun OrderDetailsView(
                             }
 
                             Spacer(modifier = Modifier.height(20.dp))
-                            AddressItem(icon = Icons.Default.Home, text = job.customerAddress)
+                            AddressItem(icon = Icons.Rounded.Home, text = job.customerAddress)
 
                             Row(modifier = Modifier.fillMaxWidth().padding(top = 24.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 OutlinedButton(
@@ -1397,7 +1520,7 @@ fun OrderDetailsView(
                                     }
                                 ) {
                                     Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                        Icon(Icons.Default.Call, contentDescription = "Call", tint = AppColors.Primary, modifier = Modifier.size(24.dp))
+                                        Icon(Icons.Rounded.Call, contentDescription = "Call", tint = AppColors.Primary, modifier = Modifier.size(24.dp))
                                     }
                                 }
                             }
@@ -1428,7 +1551,7 @@ fun OrderDetailsView(
                                 Spacer(modifier = Modifier.height(10.dp))
                                 Text("Поверніть гроші в заклад", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp, color = AppColors.TextPrimary)
                                 Spacer(modifier = Modifier.height(20.dp))
-                                AddressItem(icon = Icons.Default.ArrowForward, text = job.partnerAddress)
+                                AddressItem(icon = Icons.Rounded.ArrowForward, text = job.partnerAddress)
 
                                 Spacer(modifier = Modifier.height(24.dp))
                                 OutlinedButton(
@@ -1602,7 +1725,7 @@ fun ChatView(jobId: Int, cookie: String) {
                     if (isSending) {
                         CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.dp)
                     } else {
-                        Icon(Icons.Default.Send, contentDescription = "Надіслати", tint = Color.White, modifier = Modifier.size(22.dp).padding(start = 4.dp))
+                        Icon(Icons.Rounded.Send, contentDescription = "Надіслати", tint = Color.White, modifier = Modifier.size(22.dp).padding(start = 4.dp))
                     }
                 }
             }
@@ -1628,7 +1751,7 @@ fun HistoryScreen(
                 title = { Text("Історія замовлень", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
+                        Icon(Icons.Rounded.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Background)
@@ -1638,7 +1761,7 @@ fun HistoryScreen(
         PullToRefreshBox(isRefreshing = isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize().padding(padding)) {
             if (history.isEmpty() && !isLoading) {
                 Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Default.DateRange, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(80.dp))
+                    Icon(Icons.Rounded.DateRange, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(80.dp))
                     Spacer(modifier = Modifier.height(20.dp))
                     Text("Історія порожня", color = AppColors.TextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
                 }
@@ -1673,7 +1796,7 @@ fun ProfileScreen(
                 title = { Text("Мій профіль", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
-                        Icon(Icons.Default.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
+                        Icon(Icons.Rounded.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
                     }
                 },
                 colors = TopAppBarDefaults.topAppBarColors(containerColor = AppColors.Background)
@@ -1704,7 +1827,7 @@ fun ProfileScreen(
                             .shadow(8.dp, CircleShape),
                         contentAlignment = Alignment.Center
                     ) {
-                        Icon(Icons.Default.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(60.dp))
+                        Icon(Icons.Rounded.Person, contentDescription = null, tint = Color.White, modifier = Modifier.size(60.dp))
                     }
                     Spacer(modifier = Modifier.height(16.dp))
                     Text(profile.name, fontSize = 24.sp, fontWeight = FontWeight.ExtraBold, color = AppColors.TextPrimary)
@@ -1800,7 +1923,7 @@ fun HistoryOrderCard(order: HistoryOrder) {
             }
 
             Spacer(modifier = Modifier.height(12.dp))
-            AddressItem(icon = Icons.Default.LocationOn, text = order.address)
+            AddressItem(icon = Icons.Rounded.LocationOn, text = order.address)
 
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {

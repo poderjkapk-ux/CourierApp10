@@ -28,7 +28,7 @@ import retrofit2.http.*
 // 1. МОДЕЛІ ДАНИХ (Data Classes)
 // ==========================================
 
-// ДОДАНО: Безпечний пустий клас для POST-запитів, який не видаляється системою стиснення
+// Безпечний пустий клас для POST-запитів, який не видаляється системою стиснення
 class EmptyRequest
 
 data class Announcement(
@@ -49,7 +49,8 @@ data class OpenOrder(
     @SerializedName("dist_trip") val distTrip: String?,
     @SerializedName("payment_type") val paymentType: String,
     @SerializedName("is_return") val isReturn: Boolean,
-    val comment: String?
+    val comment: String?,
+    @SerializedName("estimated_ready_at") val readyAt: String? // ДОДАНО ДЛЯ ТАЙМЕРІВ
 )
 
 data class ActiveJobResponse(
@@ -62,6 +63,7 @@ data class ActiveJobDetail(
     val status: String,
     @SerializedName("server_status") val serverStatus: String,
     @SerializedName("is_ready") val isReady: Boolean,
+    @SerializedName("estimated_ready_at") val readyAt: String?, // ДОДАНО ДЛЯ ТАЙМЕРІВ
 
     @SerializedName("assigned_at") val assignedAt: String?,
     @SerializedName("picked_up_at") val pickedUpAt: String?,
@@ -121,13 +123,11 @@ data class CourierProfile(
     @SerializedName("is_online") val isOnline: Boolean
 )
 
-// ВИПРАВЛЕНО: Додано @SerializedName, щоб R8 не ламав змінні при стисненні
 data class VerificationInitResponse(
     @SerializedName("token") val token: String,
     @SerializedName("link") val link: String
 )
 
-// ВИПРАВЛЕНО: Додано @SerializedName
 data class VerificationCheckResponse(
     @SerializedName("status") val status: String,
     @SerializedName("phone") val phone: String?
@@ -214,7 +214,6 @@ interface ApiService {
         @Field("token") token: String
     ): StatusResponse
 
-    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @POST("/api/courier/toggle_status")
     suspend fun toggleStatus(
         @Header("Cookie") cookie: String,
@@ -227,14 +226,13 @@ interface ApiService {
         @Path("job_id") jobId: Int
     ): List<ChatMessage>
 
-    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @FormUrlEncoded
     @POST("/api/chat/send")
     suspend fun sendChatMessage(
         @Header("Cookie") cookie: String,
         @Field("job_id") jobId: Int,
         @Field("message") message: String,
-        @Field("role") role: String
+        @Field("role") role: String = "courier"
     ): SendMessageResponse
 
     @GET("/api/courier/history")
@@ -247,7 +245,6 @@ interface ApiService {
         @Header("Cookie") cookie: String
     ): CourierProfile
 
-    // ВИПРАВЛЕНО: Прибрано значення за замовчуванням
     @POST("/api/auth/init_verification")
     suspend fun initVerification(
         @Body empty: EmptyRequest
