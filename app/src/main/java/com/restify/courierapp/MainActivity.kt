@@ -447,13 +447,16 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // Слухаємо WebSocket події для миттєвого оновлення списку
+                            // Слухаємо WebSocket події для миттєвого оновлення списку або логауту
                             LaunchedEffect(Unit) {
                                 RetrofitClient.webSocketManager.messages.collect { messageJson ->
                                     try {
                                         val json = JSONObject(messageJson)
                                         val type = json.getString("type")
-                                        if (type == "new_order" || type == "job_update") {
+
+                                        if (type == "auth_error") {
+                                            forceLogout() // <--- Обробка помилки 401/403 від WebSocket
+                                        } else if (type == "new_order" || type == "job_update") {
                                             fetchData(isSilent = true) // Оновлюємо список тихо
                                         }
                                     } catch (e: Exception) {
@@ -551,12 +554,16 @@ class MainActivity : ComponentActivity() {
 
                             LaunchedEffect(Unit) { fetchActiveJob() }
 
+                            // Слухаємо WebSocket події для миттєвого оновлення замовлення або логауту
                             LaunchedEffect(Unit) {
                                 RetrofitClient.webSocketManager.messages.collect { messageJson ->
                                     try {
                                         val json = JSONObject(messageJson)
                                         val type = json.getString("type")
-                                        if (type == "job_update" || type == "job_ready") {
+
+                                        if (type == "auth_error") {
+                                            forceLogout() // <--- Обробка помилки 401/403 від WebSocket
+                                        } else if (type == "job_update" || type == "job_ready") {
                                             fetchActiveJob()
                                         }
                                     } catch (e: Exception) {

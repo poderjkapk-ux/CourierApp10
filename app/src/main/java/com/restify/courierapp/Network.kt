@@ -329,13 +329,16 @@ class WebSocketManager(private val client: OkHttpClient) {
             }
 
             override fun onClosed(webSocket: WebSocket, code: Int, reason: String) {
-                Log.d("WebSocket", "Closed: $reason")
+                Log.d("WebSocket", "Closed: $reason (code: $code)")
                 this@WebSocketManager.webSocket = null
                 stopPingJob()
 
-                // Якщо закрили не ми (наприклад обірвався інтернет) - пробуємо підняти знову
-                if (!isIntentionallyClosed && code != 1008) {
+                // Якщо закрили не ми і код НЕ пов'язаний з помилкою авторизації (1008) або нормальним закриттям (1000)
+                if (!isIntentionallyClosed && code != 1008 && code != 1000) {
                     scheduleReconnect()
+                } else if (code == 1008) {
+                    // Сервер примусово розірвав з'єднання через права доступу (Policy Violation)
+                    _messages.tryEmit("{\"type\": \"auth_error\"}")
                 }
             }
 
@@ -345,7 +348,18 @@ class WebSocketManager(private val client: OkHttpClient) {
                 stopPingJob()
 
                 if (!isIntentionallyClosed) {
-                    scheduleReconnect()
+                    // ТУТ ИСПРАВЛЕНИЕ: добавлены скобки code()
+                    val httpCode = response?.code() ?: 0
+
+                    // Перевіряємо, чи не викликана помилка простроченою сесією (401 або 403)
+                    if (httpCode == 401 || httpCode == 403) {
+                        Log.e("WebSocket", "Auth failed ($httpCode). Stopping reconnect spam.")
+                        // Відправляємо фейкове повідомлення в UI для негайного логауту
+                        _messages.tryEmit("{\"type\": \"auth_error\"}")
+                    } else {
+                        // Якщо це просто обрив інтернету – пробуємо перепідключитись
+                        scheduleReconnect()
+                    }
                 }
             }
         })
