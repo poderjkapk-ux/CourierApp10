@@ -504,7 +504,9 @@ fun LoginScreen(
                 .background(Brush.verticalGradient(colors = listOf(AppColors.Primary, AppColors.PrimaryDark)))
         ) {
             Column(
-                modifier = Modifier.align(Alignment.BottomStart).padding(28.dp)
+                modifier = Modifier
+                    .align(Alignment.BottomStart)
+                    .padding(start = 28.dp, bottom = 80.dp) // <-- Увеличили отступ снизу
             ) {
                 Text("Restify", color = Color.White.copy(alpha = 0.8f), fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 Text("Delivery", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
