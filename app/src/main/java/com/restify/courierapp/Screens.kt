@@ -10,6 +10,7 @@ import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.Spring
 import androidx.compose.animation.core.spring
 import androidx.compose.animation.core.tween
@@ -19,6 +20,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -59,12 +61,16 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
@@ -80,6 +86,7 @@ import java.time.Duration
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import kotlin.math.roundToInt
 
 // ==========================================
 // 0. ДИЗАЙН-СИСТЕМА (Кольори та Кастомні Компоненти)
@@ -134,6 +141,102 @@ fun ModernButton(
                     Spacer(modifier = Modifier.width(10.dp))
                 }
                 Text(text, fontSize = 17.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.5.sp)
+            }
+        }
+    }
+}
+
+// Кастомна кнопка-слайдер для підтвердження дій (Swipe-to-action)
+@Composable
+fun SwipeToActionButton(
+    text: String,
+    onSwipe: () -> Unit,
+    modifier: Modifier = Modifier,
+    backgroundColor: Color = AppColors.Primary,
+    isLoading: Boolean = false
+) {
+    var width by remember { mutableIntStateOf(0) }
+    val dragOffset = remember { Animatable(0f) }
+    val coroutineScope = rememberCoroutineScope()
+    val density = LocalDensity.current
+
+    val thumbSize = 56.dp
+    val thumbSizePx = with(density) { thumbSize.toPx() }
+
+    // Скидання повзунка, якщо завантаження завершилось (наприклад, сталася помилка)
+    LaunchedEffect(isLoading) {
+        if (!isLoading) {
+            dragOffset.animateTo(0f)
+        }
+    }
+
+    Box(
+        modifier = modifier
+            .height(56.dp)
+            .fillMaxWidth()
+            .background(backgroundColor.copy(alpha = 0.15f), RoundedCornerShape(16.dp))
+            .onSizeChanged { width = it.width },
+        contentAlignment = Alignment.CenterStart
+    ) {
+        // Текст-підказка в центрі
+        Text(
+            text = text,
+            color = backgroundColor,
+            fontWeight = FontWeight.ExtraBold,
+            fontSize = 16.sp,
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(start = thumbSize, end = 16.dp),
+            textAlign = TextAlign.Center
+        )
+
+        // Повзунок
+        Box(
+            modifier = Modifier
+                .offset { IntOffset(dragOffset.value.roundToInt(), 0) }
+                .size(thumbSize)
+                .padding(4.dp)
+                .shadow(4.dp, RoundedCornerShape(14.dp))
+                .background(backgroundColor, RoundedCornerShape(14.dp))
+                .pointerInput(isLoading) {
+                    if (isLoading) return@pointerInput // Блокуємо свайп під час завантаження
+
+                    detectHorizontalDragGestures(
+                        onDragEnd = {
+                            coroutineScope.launch {
+                                val maxScroll = width - thumbSizePx
+                                // Якщо протягнули більше ніж на 70% — дія підтверджена
+                                if (maxScroll > 0 && dragOffset.value > maxScroll * 0.7f) {
+                                    dragOffset.animateTo(maxScroll)
+                                    onSwipe()
+                                } else {
+                                    // Інакше повертаємо на початок
+                                    dragOffset.animateTo(0f)
+                                }
+                            }
+                        }
+                    ) { change, dragAmount ->
+                        change.consume()
+                        coroutineScope.launch {
+                            val maxScroll = width - thumbSizePx
+                            if (maxScroll > 0) {
+                                val newOffset = (dragOffset.value + dragAmount).coerceIn(0f, maxScroll)
+                                dragOffset.snapTo(newOffset)
+                            }
+                        }
+                    }
+                },
+            contentAlignment = Alignment.Center
+        ) {
+            if (isLoading) {
+                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(24.dp), strokeWidth = 2.5.dp)
+            } else {
+                Icon(
+                    imageVector = Icons.Rounded.ArrowForward,
+                    contentDescription = null,
+                    tint = Color.White,
+                    modifier = Modifier.size(24.dp)
+                )
             }
         }
     }
@@ -506,7 +609,7 @@ fun LoginScreen(
             Column(
                 modifier = Modifier
                     .align(Alignment.BottomStart)
-                    .padding(start = 28.dp, bottom = 80.dp) // <-- Увеличили отступ снизу
+                    .padding(start = 28.dp, bottom = 80.dp)
             ) {
                 Text("Restify", color = Color.White.copy(alpha = 0.8f), fontSize = 20.sp, fontWeight = FontWeight.Medium)
                 Text("Delivery", color = Color.White, fontSize = 42.sp, fontWeight = FontWeight.ExtraBold, letterSpacing = 1.sp)
@@ -729,7 +832,6 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
                                     isLoading = true
                                     errorMessage = null
                                     try {
-                                        // ВИПРАВЛЕНО: Використовуємо EmptyRequest(), як було в надійній версії App10
                                         val res = RetrofitClient.apiService.initVerification(EmptyRequest())
                                         if (res.isSuccessful && res.body() != null) {
                                             verificationToken = res.body()!!.token
@@ -926,7 +1028,6 @@ fun RegistrationScreen(onRegisterSuccess: () -> Unit, onBackToLogin: () -> Unit)
     }
 }
 
-// ВИПРАВЛЕНО: Додано .use { } для автоматичного закриття потоків і запобігання витоку файлових дескрипторів
 fun prepareFilePart(context: Context, partName: String, fileUri: Uri): MultipartBody.Part? {
     return try {
         val tempFile = File(context.cacheDir, "${partName}_temp.jpg")
@@ -947,18 +1048,18 @@ fun prepareFilePart(context: Context, partName: String, fileUri: Uri): Multipart
 @Composable
 fun OrdersListScreen(
     orders: List<OpenOrder>,
-    announcements: List<Announcement>, // ДОДАНО
+    announcements: List<Announcement>,
     isOnline: Boolean,
-    isGpsEnabled: Boolean, // Додано параметр статусу GPS
+    isGpsEnabled: Boolean,
     onToggleStatus: (Boolean) -> Unit,
     onAcceptOrder: (Int, () -> Unit) -> Unit,
-    onDismissAnnouncement: (Int) -> Unit, // ДОДАНО
+    onDismissAnnouncement: (Int) -> Unit,
     onRefresh: () -> Unit,
     onNavigateToHistory: () -> Unit,
     onNavigateToProfile: () -> Unit,
     isLoading: Boolean
 ) {
-    val context = LocalContext.current // Додано для Intent до налаштувань
+    val context = LocalContext.current
 
     Scaffold(
         containerColor = AppColors.Background,
@@ -1026,7 +1127,7 @@ fun OrdersListScreen(
             }
 
             PullToRefreshBox(isRefreshing = isLoading, onRefresh = onRefresh, modifier = Modifier.weight(1f)) {
-                if (orders.isEmpty() && announcements.isEmpty() && !isLoading) { // ОНОВЛЕНО: Враховуємо оголошення
+                if (orders.isEmpty() && announcements.isEmpty() && !isLoading) {
                     Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
                         Icon(Icons.Rounded.CheckCircle, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(80.dp))
                         Spacer(modifier = Modifier.height(20.dp))
@@ -1147,7 +1248,6 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
                 HorizontalDivider(color = Color.LightGray.copy(alpha = 0.3f))
                 Spacer(modifier = Modifier.height(16.dp))
 
-                // ВИПРАВЛЕНО ТЕКСТ ПРО ВИКУП
                 if (order.paymentType == "buyout") {
                     Box(modifier = Modifier.fillMaxWidth().background(AppColors.Error.copy(alpha = 0.1f), RoundedCornerShape(12.dp)).padding(12.dp)) {
                         Text(
@@ -1173,26 +1273,23 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
 
                 Spacer(modifier = Modifier.height(24.dp))
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    if (order.distTrip != null) {
-                        Text("🧭 Маршрут: ~${order.distTrip} км", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary, modifier = Modifier.weight(1f))
-                    } else {
-                        Spacer(modifier = Modifier.weight(1f))
-                    }
-
-                    ModernButton(
-                        text = "Прийняти",
-                        onClick = {
-                            isAccepting = true
-                            onAcceptClick(order.id) {
-                                isAccepting = false
-                            }
-                        },
-                        modifier = Modifier.height(48.dp).width(140.dp),
-                        backgroundColor = AppColors.Primary,
-                        isLoading = isAccepting
-                    )
+                if (order.distTrip != null) {
+                    Text("🧭 Маршрут: ~${order.distTrip} км", fontSize = 14.sp, fontWeight = FontWeight.SemiBold, color = AppColors.TextSecondary)
+                    Spacer(modifier = Modifier.height(16.dp))
                 }
+
+                SwipeToActionButton(
+                    text = "Свайпніть, щоб прийняти >>>",
+                    onSwipe = {
+                        isAccepting = true
+                        onAcceptClick(order.id) {
+                            isAccepting = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    backgroundColor = AppColors.Primary,
+                    isLoading = isAccepting
+                )
             }
         }
     }
@@ -1339,7 +1436,6 @@ fun OrderDetailsView(
             if (intent.resolveActivity(context.packageManager) != null) {
                 context.startActivity(intent)
             } else {
-                // ВИПРАВЛЕНО: Правильне веб-посилання на Google Карти
                 context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse("https://www.google.com/maps/search/?api=1&query=${Uri.encode(address)}")))
             }
         } catch (e: Exception) {
@@ -1391,11 +1487,9 @@ fun OrderDetailsView(
                         }
                     }
                 } else if (isStep1Active && !job.readyAt.isNullOrEmpty()) {
-                    // --- ДОДАНО ВЕЛИКИЙ ТАЙМЕР ---
                     item {
                         LargeReadinessTimer(job.readyAt)
                     }
-                    // -----------------------------
                 }
 
                 // --- ФІНАНСИ ТА ОПЛАТА ---
@@ -1420,7 +1514,6 @@ fun OrderDetailsView(
                                 }
                             }
 
-                            // --- ВИПРАВЛЕНО: ТЕКСТИ ДЛЯ ВИКУПУ ---
                             val paymentInfo = when (job.paymentType) {
                                 "prepaid" -> Pair("✨ ОПЛАЧЕНО (Гроші не беремо)", AppColors.Secondary)
                                 "buyout_paid" -> Pair("✨ ОПЛАЧЕНО В ЗАКЛАДі (Свої гроші: ${job.orderPrice} ₴)", AppColors.Secondary)
@@ -1564,7 +1657,6 @@ fun OrderDetailsView(
                     }
                 }
 
-                // --- ВИПРАВЛЕНО: КАРТКА ПОВЕРНЕННЯ КОШТІВ (ТИЛЬКИ ЯКЩО return_required) ---
                 if (job.isReturnRequired && isStep2Done) {
                     val isStep3Active = job.serverStatus == "returning"
                     item {
@@ -1608,7 +1700,7 @@ fun OrderDetailsView(
             }
         }
 
-        // --- ВИПРАВЛЕНО: КНОПКА ДІЇ ЗНИЗУ ---
+        // --- КНОПКА ДІЇ ЗНИЗУ З СВАЙПОМ ---
         Box(
             modifier = Modifier
                 .fillMaxWidth()
@@ -1617,13 +1709,35 @@ fun OrderDetailsView(
                 .padding(20.dp)
         ) {
             when (job.serverStatus) {
-                "assigned" -> ModernButton("Я в закладі", { isActionLoading = true; onArrivedPickup(job.id) }, Modifier.fillMaxWidth(), backgroundColor = AppColors.Primary, isLoading = isActionLoading)
-                "arrived_pickup", "ready" -> ModernButton("Забрав замовлення", { isActionLoading = true; onUpdateStatus(job.id, "picked_up") }, Modifier.fillMaxWidth(), backgroundColor = AppColors.Secondary, isLoading = isActionLoading)
+                "assigned" -> SwipeToActionButton(
+                    text = "Свайп: Я в закладі >>>",
+                    onSwipe = { isActionLoading = true; onArrivedPickup(job.id) },
+                    backgroundColor = AppColors.Primary,
+                    isLoading = isActionLoading
+                )
+                "arrived_pickup", "ready" -> SwipeToActionButton(
+                    text = "Свайп: Забрав пакунок >>>",
+                    onSwipe = { isActionLoading = true; onUpdateStatus(job.id, "picked_up") },
+                    backgroundColor = AppColors.Secondary,
+                    isLoading = isActionLoading
+                )
                 "picked_up" -> {
-                    val btnText = if (job.isReturnRequired) "Забрав гроші (Везу в заклад)" else "Успішно доставлено"
-                    ModernButton(btnText, { isActionLoading = true; onUpdateStatus(job.id, "delivered") }, Modifier.fillMaxWidth(), backgroundColor = AppColors.Secondary, isLoading = isActionLoading)
+                    val btnText = if (job.isReturnRequired) "Свайп: Везу гроші назад >>>" else "Свайп: Успішно доставлено >>>"
+                    SwipeToActionButton(
+                        text = btnText,
+                        onSwipe = { isActionLoading = true; onUpdateStatus(job.id, "delivered") },
+                        backgroundColor = AppColors.Secondary,
+                        isLoading = isActionLoading
+                    )
                 }
-                "returning" -> ModernButton("Гроші віддав", { Toast.makeText(context, "Чекайте підтвердження від закладу. Заклад має натиснути кнопку у себе в кабінеті.", Toast.LENGTH_LONG).show() }, Modifier.fillMaxWidth(), backgroundColor = AppColors.Warning, isLoading = false)
+                "returning" -> SwipeToActionButton(
+                    text = "Свайп: Гроші віддав >>>",
+                    onSwipe = {
+                        Toast.makeText(context, "Чекайте підтвердження від закладу. Заклад має натиснути кнопку у себе в кабінеті.", Toast.LENGTH_LONG).show()
+                    },
+                    backgroundColor = AppColors.Warning,
+                    isLoading = false
+                )
             }
         }
     }
@@ -1891,7 +2005,7 @@ fun ProfileScreen(
                             ProfileStatItem("Рейтинг", profile.rating?.toString() ?: "5.0", AppColors.Warning)
                             Box(modifier = Modifier.width(1.dp).height(40.dp).background(Color.LightGray.copy(alpha = 0.5f)))
 
-                            // <--- ИЗМЕНЕНО: БАЛАНС
+                            // БАЛАНС
                             val balanceInt = profile.balance?.toInt() ?: 0
                             ProfileStatItem("Баланс", "$balanceInt ₴", AppColors.Secondary)
                         }
