@@ -2077,6 +2077,7 @@ fun HistoryOrderCard(order: HistoryOrder) {
 
             Spacer(modifier = Modifier.height(16.dp))
             Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                // Статус замовлення (Ліва частина)
                 Box(
                     modifier = Modifier
                         .background(
@@ -2093,7 +2094,28 @@ fun HistoryOrderCard(order: HistoryOrder) {
                     )
                 }
 
-                Text("+${order.price} ₴", fontWeight = FontWeight.Black, fontSize = 20.sp, color = if (isDelivered) AppColors.Secondary else AppColors.TextSecondary)
+                // Фінансова частина (Права частина)
+                Column(horizontalAlignment = Alignment.End) {
+                    Text("+${order.price} ₴", fontWeight = FontWeight.Black, fontSize = 20.sp, color = if (isDelivered) AppColors.Secondary else AppColors.TextSecondary)
+
+                    // Красиве відображення комісії
+                    if (isDelivered && order.commission != null && order.commission > 0) {
+                        Spacer(modifier = Modifier.height(6.dp))
+                        Box(
+                            modifier = Modifier
+                                .background(AppColors.Error.copy(alpha = 0.1f), RoundedCornerShape(6.dp))
+                                .border(1.dp, AppColors.Error.copy(alpha = 0.2f), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 8.dp, vertical = 4.dp)
+                        ) {
+                            Text(
+                                text = "Комісія: -${order.commission} ₴",
+                                color = AppColors.Error,
+                                fontSize = 12.sp,
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                    }
+                }
             }
         }
     }

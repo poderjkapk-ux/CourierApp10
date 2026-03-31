@@ -109,7 +109,8 @@ data class HistoryOrder(
     val date: String,
     val address: String,
     val price: Double,
-    val status: String
+    val status: String,
+    val commission: Double? = 0.0 // <- ДОДАНО ПОЛЕ КОМІСІЇ
 )
 
 data class CourierProfile(
