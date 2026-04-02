@@ -38,6 +38,22 @@ data class Announcement(
     val style: String
 )
 
+// Модель для Мотиваторів (Цілей)
+data class Motivator(
+    val id: Int,
+    val title: String,
+    val description: String?,
+    val target_orders: Int,
+    val current_orders: Int,
+    val period_days: Int,
+    val reward_days: Int,
+    val reward_commission: Double,
+    val status: String,
+    val deadline_date: String?,
+    val reward_end_date: String?,
+    val progress_percent: Int
+)
+
 data class OpenOrder(
     val id: Int,
     @SerializedName("restaurant_name") val restaurantName: String,
@@ -281,6 +297,13 @@ interface ApiService {
         @Path("ann_id") annId: Int
     ): StatusResponse
     // -------------------------
+
+    // --- СИСТЕМА МОТИВАТОРІВ ---
+    @GET("/api/courier/motivators")
+    suspend fun getMotivators(
+        @Header("Cookie") cookie: String
+    ): List<Motivator>
+    // ---------------------------
 }
 
 // ==========================================

@@ -625,13 +625,26 @@ class MainActivity : ComponentActivity() {
                         // РОУТ 5: ПРОФІЛЬ КУР'ЄРА
                         composable("profile") {
                             var profileData by remember { mutableStateOf<CourierProfile?>(null) }
+                            var motivatorsList by remember { mutableStateOf<List<Motivator>>(emptyList()) }
                             var isLoading by remember { mutableStateOf(true) }
                             val currentCookie = sharedPref.getString("cookie", "") ?: ""
 
                             LaunchedEffect(Unit) {
                                 coroutineScope.launch {
                                     try {
-                                        profileData = RetrofitClient.apiService.getProfile(currentCookie)
+                                        // Одночасне завантаження профілю та мотиваторів
+                                        val profileTask = launch { profileData = RetrofitClient.apiService.getProfile(currentCookie) }
+                                        val motivatorsTask = launch {
+                                            try {
+                                                motivatorsList = RetrofitClient.apiService.getMotivators(currentCookie)
+                                            } catch (e: Exception) {
+                                                Log.e("Motivators", "Помилка завантаження мотиваторів: ${e.message}")
+                                            }
+                                        }
+
+                                        profileTask.join()
+                                        motivatorsTask.join()
+
                                     } catch (e: retrofit2.HttpException) {
                                         if (e.code() == 401 || e.code() == 403) forceLogout()
                                     } catch (e: Exception) {
@@ -644,6 +657,7 @@ class MainActivity : ComponentActivity() {
 
                             ProfileScreen(
                                 profile = profileData,
+                                motivators = motivatorsList,
                                 isLoading = isLoading,
                                 onBack = { navController.popBackStack() },
                                 onLogout = { forceLogout(isExplicitLogout = true) }

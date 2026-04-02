@@ -31,6 +31,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.EmojiEvents
+import androidx.compose.material.icons.filled.LocalFireDepartment
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.ArrowForward
@@ -86,8 +88,12 @@ import java.time.Duration
 import java.time.Instant
 import java.util.Date
 import java.util.Locale
+import java.util.concurrent.TimeUnit
 import kotlin.math.roundToInt
 import java.util.Calendar
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
+import java.time.temporal.ChronoUnit
 
 // ==========================================
 // 0. ДИЗАЙН-СИСТЕМА (Кольори та Кастомні Компоненти)
@@ -2097,6 +2103,7 @@ fun HistoryScreen(
 @Composable
 fun ProfileScreen(
     profile: CourierProfile?,
+    motivators: List<Motivator>,
     isLoading: Boolean,
     onBack: () -> Unit,
     onLogout: () -> Unit
@@ -2125,7 +2132,8 @@ fun ProfileScreen(
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
-                        .padding(16.dp),
+                        .padding(16.dp)
+                        .verticalScroll(rememberScrollState()),
                     horizontalAlignment = Alignment.CenterHorizontally
                 ) {
                     // Аватарка
@@ -2175,6 +2183,9 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
+                    // --- СЕКЦІЯ МОТИВАТОРІВ (ЦІЛІ ТА БОНУСИ) ---
+                    MotivatorsSection(motivators = motivators)
+
                     // Карточка с дополнительной информацией (Отзывы)
                     Card(
                         modifier = Modifier.fillMaxWidth(),
@@ -2187,7 +2198,7 @@ fun ProfileScreen(
                         }
                     }
 
-                    Spacer(modifier = Modifier.weight(1f))
+                    Spacer(modifier = Modifier.height(24.dp))
 
                     // Кнопка выхода
                     OutlinedButton(
@@ -2280,5 +2291,178 @@ fun HistoryOrderCard(order: HistoryOrder) {
                 }
             }
         }
+    }
+}
+
+// ==========================================
+// 6. МОТИВАТОРИ (ЦІЛІ ТА БОНУСИ)
+// ==========================================
+
+@Composable
+fun MotivatorsSection(motivators: List<Motivator>) {
+    if (motivators.isEmpty()) return
+
+    Column(modifier = Modifier.fillMaxWidth().padding(bottom = 24.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(Icons.Default.EmojiEvents, contentDescription = "Trophy", tint = Color(0xFFFACC15))
+            Spacer(modifier = Modifier.width(8.dp))
+            Text(
+                text = "Ваші цілі та бонуси",
+                style = MaterialTheme.typography.titleMedium,
+                color = AppColors.TextPrimary,
+                fontWeight = FontWeight.Bold
+            )
+        }
+        Spacer(modifier = Modifier.height(12.dp))
+
+        motivators.forEach { motivator ->
+            if (motivator.status == "reward_active") {
+                ActiveRewardCard(motivator)
+            } else if (motivator.status == "in_progress") {
+                InProgressMotivatorCard(motivator)
+            }
+            Spacer(modifier = Modifier.height(12.dp))
+        }
+    }
+}
+
+@Composable
+fun InProgressMotivatorCard(m: Motivator) {
+    val progress = m.progress_percent / 100f
+
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, AppColors.Primary.copy(alpha = 0.5f))
+    ) {
+        Box(
+            modifier = Modifier
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(AppColors.Primary, AppColors.PrimaryDark)
+                    )
+                )
+                .padding(16.dp)
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.LocalFireDepartment, contentDescription = null, tint = Color(0xFFFACC15))
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(m.title, color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Зробіть ${m.target_orders} замовлень за ${m.period_days} дн. та отримайте комісію ${m.reward_commission}% на ${m.reward_days} днів!",
+                    color = Color.White.copy(alpha = 0.8f),
+                    fontSize = 14.sp,
+                    lineHeight = 20.sp
+                )
+                Spacer(modifier = Modifier.height(16.dp))
+
+                // Прогрес бар
+                LinearProgressIndicator(
+                    progress = { progress },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(10.dp)
+                        .clip(RoundedCornerShape(5.dp)),
+                    color = AppColors.Secondary,
+                    trackColor = Color.White.copy(alpha = 0.2f)
+                )
+                Spacer(modifier = Modifier.height(8.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        text = "Залишилось: ${calculateDaysLeft(m.deadline_date)} дн.",
+                        color = Color.White.copy(alpha = 0.7f),
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${m.current_orders} / ${m.target_orders}",
+                        color = Color.White,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun ActiveRewardCard(m: Motivator) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(16.dp),
+        colors = CardDefaults.cardColors(containerColor = Color.Transparent),
+        border = BorderStroke(1.dp, AppColors.Secondary)
+    ) {
+        Box(
+            modifier = Modifier
+                .background(
+                    Brush.linearGradient(
+                        colors = listOf(AppColors.Secondary.copy(alpha = 0.15f), AppColors.PrimaryDark)
+                    )
+                )
+                .padding(16.dp)
+        ) {
+            Column {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(Icons.Default.EmojiEvents, contentDescription = null, tint = AppColors.Secondary)
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(m.title, color = AppColors.Secondary, fontWeight = FontWeight.ExtraBold, fontSize = 18.sp)
+                }
+                Spacer(modifier = Modifier.height(6.dp))
+                Text(
+                    text = "Бонус активний! Ваша комісія знижена до ${m.reward_commission}%.",
+                    color = Color.White,
+                    fontSize = 14.sp
+                )
+                Spacer(modifier = Modifier.height(12.dp))
+
+                Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                    Text(
+                        text = "Діє до: ${formatDateUI(m.reward_end_date)}",
+                        color = AppColors.Secondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "✓ Виконано",
+                        color = AppColors.Secondary,
+                        fontSize = 13.sp,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+    }
+}
+
+// Хелпер-функції для дат
+fun calculateDaysLeft(deadlineZ: String?): Long {
+    if (deadlineZ == null) return 0
+    return try {
+        // Instant.parse ідеально розуміє формат ISO 8601 з мілісекундами та без
+        val instant = Instant.parse(deadlineZ)
+        val now = Instant.now()
+        val diff = ChronoUnit.DAYS.between(now, instant)
+        if (diff < 0) 0 else diff
+    } catch (e: Exception) {
+        0
+    }
+}
+
+fun formatDateUI(dateZ: String?): String {
+    if (dateZ == null) return "-"
+    return try {
+        val instant = Instant.parse(dateZ)
+        val formatter = DateTimeFormatter.ofPattern("dd.MM.yyyy")
+            .withZone(ZoneId.systemDefault()) // Конвертуємо в локальний часовий пояс пристрою
+        formatter.format(instant)
+    } catch (e: Exception) {
+        "-"
     }
 }

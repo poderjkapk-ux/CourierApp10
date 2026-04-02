@@ -19,8 +19,8 @@ android {
         // ИСПРАВЛЕНИЕ: Рекомендуется также обновить targetSdk до 36
         targetSdk = 35
 
-        versionCode = 30
-        versionName = "1.6.4"
+        versionCode = 31
+        versionName = "1.6.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
@@ -67,6 +67,9 @@ dependencies {
     androidTestImplementation(libs.androidx.compose.ui.test.junit4)
     debugImplementation(libs.androidx.compose.ui.tooling)
     debugImplementation(libs.androidx.compose.ui.test.manifest)
+
+    // ДОДАЙТЕ ОСЬ ЦЮ ЛІНІЮ ДЛЯ РОЗШИРЕНИХ ІКОНОК:
+    implementation("androidx.compose.material:material-icons-extended")
 
     // Навигация
     implementation("androidx.navigation:navigation-compose:2.7.7")
