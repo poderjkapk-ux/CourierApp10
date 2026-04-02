@@ -87,6 +87,7 @@ import java.time.Instant
 import java.util.Date
 import java.util.Locale
 import kotlin.math.roundToInt
+import java.util.Calendar
 
 // ==========================================
 // 0. ДИЗАЙН-СИСТЕМА (Кольори та Кастомні Компоненти)
@@ -1894,11 +1895,44 @@ fun HistoryScreen(
     onBack: () -> Unit,
     onRefresh: () -> Unit
 ) {
+    // --- СТАН ФІЛЬТРІВ ТА КАЛЕНДАРЯ ---
+    var currentFilter by remember { mutableStateOf("Сьогодні") }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val datePickerState = rememberDatePickerState()
+
+    // Форматування дат для локальної фільтрації (бекенд віддає "dd.MM HH:mm")
+    val todayStr = remember { SimpleDateFormat("dd.MM", Locale.getDefault()).format(Date()) }
+    val yesterdayStr = remember {
+        val cal = Calendar.getInstance().apply { add(Calendar.DAY_OF_YEAR, -1) }
+        SimpleDateFormat("dd.MM", Locale.getDefault()).format(cal.time)
+    }
+
+    // Якщо вибрано кастомну дату
+    var customDateFilter by remember { mutableStateOf<String?>(null) }
+
+    // --- ФІЛЬТРАЦІЯ СПИСКУ ---
+    val filteredHistory = remember(history, currentFilter, customDateFilter) {
+        when (currentFilter) {
+            "Всі" -> history
+            "Сьогодні" -> history.filter { it.date.startsWith(todayStr) }
+            "Вчора" -> history.filter { it.date.startsWith(yesterdayStr) }
+            "Обрана дата" -> history.filter { customDateFilter != null && it.date.startsWith(customDateFilter!!) }
+            else -> history
+        }
+    }
+
+    // --- ПІДРАХУНОК СТАТИСТИКИ (тільки для "delivered") ---
+    val deliveredOrders = filteredHistory.filter { it.status == "delivered" }
+    val completedCount = deliveredOrders.size
+    val totalEarned = deliveredOrders.sumOf { it.price } // Це delivery_fee з бекенду
+    val totalCommission = deliveredOrders.sumOf { it.commission ?: 0.0 }
+    val netProfit = totalEarned - totalCommission
+
     Scaffold(
         containerColor = AppColors.Background,
         topBar = {
             TopAppBar(
-                title = { Text("Історія замовлень", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) },
+                title = { Text("Історія та Доходи", fontWeight = FontWeight.ExtraBold, fontSize = 22.sp) },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.Rounded.ArrowBack, contentDescription = "Назад", tint = AppColors.Primary)
@@ -1908,22 +1942,150 @@ fun HistoryScreen(
             )
         }
     ) { padding ->
-        PullToRefreshBox(isRefreshing = isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize().padding(padding)) {
-            if (history.isEmpty() && !isLoading) {
-                Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
-                    Icon(Icons.Rounded.DateRange, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(80.dp))
-                    Spacer(modifier = Modifier.height(20.dp))
-                    Text("Історія порожня", color = AppColors.TextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
-                }
-            } else {
-                LazyColumn(
-                    modifier = Modifier.fillMaxSize(),
-                    contentPadding = PaddingValues(16.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    items(history) { order -> HistoryOrderCard(order) }
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+
+            // --- РЯДОК ФІЛЬТРІВ ---
+            ScrollableTabRow(
+                selectedTabIndex = listOf("Сьогодні", "Вчора", "Обрана дата", "Всі").indexOf(currentFilter).coerceAtLeast(0),
+                containerColor = AppColors.Background,
+                contentColor = AppColors.Primary,
+                edgePadding = 16.dp,
+                indicator = { },
+                divider = { }
+            ) {
+                val filters = listOf("Сьогодні", "Вчора", "Обрана дата", "Всі")
+                filters.forEach { filter ->
+                    val isSelected = currentFilter == filter
+                    FilterChip(
+                        selected = isSelected,
+                        onClick = {
+                            if (filter == "Обрана дата") {
+                                showDatePicker = true
+                            } else {
+                                currentFilter = filter
+                                customDateFilter = null
+                            }
+                        },
+                        label = {
+                            Text(
+                                text = if (filter == "Обрана дата" && customDateFilter != null) customDateFilter!! else filter,
+                                fontWeight = FontWeight.Bold
+                            )
+                        },
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AppColors.Primary,
+                            selectedLabelColor = Color.White,
+                            containerColor = AppColors.Surface
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            borderColor = if (isSelected) AppColors.Primary else Color.LightGray.copy(alpha = 0.5f),
+                            enabled = true,
+                            selected = isSelected
+                        ),
+                        modifier = Modifier.padding(end = 8.dp),
+                        shape = RoundedCornerShape(16.dp)
+                    )
                 }
             }
+
+            // --- КАРТКА ПІДСУМКІВ (SUMMARY) ---
+            Card(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 8.dp)
+                    .shadow(12.dp, RoundedCornerShape(20.dp), spotColor = AppColors.Primary.copy(alpha = 0.2f)),
+                shape = RoundedCornerShape(20.dp)
+            ) {
+                Box(modifier = Modifier
+                    .background(Brush.linearGradient(listOf(AppColors.Primary, AppColors.PrimaryDark)))
+                    .padding(20.dp)
+                ) {
+                    Column {
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Чистий прибуток", color = Color.White.copy(alpha = 0.8f), fontSize = 14.sp, fontWeight = FontWeight.Medium)
+                            Box(modifier = Modifier.background(Color.White.copy(alpha = 0.2f), RoundedCornerShape(8.dp)).padding(horizontal = 8.dp, vertical = 4.dp)) {
+                                Text("$completedCount замовлень", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+
+                        Spacer(modifier = Modifier.height(4.dp))
+                        Text("₴ ${String.format(Locale.US, "%.2f", netProfit)}", color = Color.White, fontSize = 36.sp, fontWeight = FontWeight.Black)
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = Color.White.copy(alpha = 0.15f))
+                        Spacer(modifier = Modifier.height(16.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+                            Column {
+                                Text("Дохід з доставок", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                                Text("+ ₴${String.format(Locale.US, "%.2f", totalEarned)}", color = AppColors.Secondary, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                            Column(horizontalAlignment = Alignment.End) {
+                                Text("Комісія сервісу", color = Color.White.copy(alpha = 0.7f), fontSize = 12.sp)
+                                Text("- ₴${String.format(Locale.US, "%.2f", totalCommission)}", color = AppColors.Error, fontSize = 16.sp, fontWeight = FontWeight.Bold)
+                            }
+                        }
+                    }
+                }
+            }
+
+            // --- СПИСОК ЗАМОВЛЕНЬ ---
+            PullToRefreshBox(isRefreshing = isLoading, onRefresh = onRefresh, modifier = Modifier.fillMaxSize().padding(top = 8.dp)) {
+                if (filteredHistory.isEmpty() && !isLoading) {
+                    Column(Modifier.fillMaxSize(), verticalArrangement = Arrangement.Center, horizontalAlignment = Alignment.CenterHorizontally) {
+                        Icon(Icons.Rounded.DateRange, contentDescription = null, tint = Color.LightGray, modifier = Modifier.size(80.dp))
+                        Spacer(modifier = Modifier.height(20.dp))
+                        Text("Немає замовлень за цей період", color = AppColors.TextSecondary, fontSize = 18.sp, fontWeight = FontWeight.Medium)
+                    }
+                } else {
+                    LazyColumn(
+                        modifier = Modifier.fillMaxSize(),
+                        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 16.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                        items(filteredHistory) { order -> HistoryOrderCard(order) }
+                    }
+                }
+            }
+        }
+    }
+
+    // --- ДІАЛОГ ВИБОРУ ДАТИ ---
+    if (showDatePicker) {
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(onClick = {
+                    datePickerState.selectedDateMillis?.let { millis ->
+                        // Конвертуємо вибрані мілісекунди у формат "dd.MM"
+                        val formatter = SimpleDateFormat("dd.MM", Locale.getDefault())
+                        customDateFilter = formatter.format(Date(millis))
+                        currentFilter = "Обрана дата"
+                    }
+                    showDatePicker = false
+                }) {
+                    Text("Обрати", fontWeight = FontWeight.Bold, color = AppColors.Primary)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) {
+                    Text("Скасувати", color = AppColors.TextSecondary)
+                }
+            },
+            colors = DatePickerDefaults.colors(
+                containerColor = AppColors.Surface,
+                titleContentColor = AppColors.Primary,
+                headlineContentColor = AppColors.Primary
+            )
+        ) {
+            DatePicker(
+                state = datePickerState,
+                colors = DatePickerDefaults.colors(
+                    selectedDayContainerColor = AppColors.Primary,
+                    todayDateBorderColor = AppColors.Primary,
+                    todayContentColor = AppColors.Primary
+                )
+            )
         }
     }
 }
