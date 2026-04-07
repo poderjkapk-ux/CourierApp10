@@ -2108,6 +2108,14 @@ fun ProfileScreen(
     onBack: () -> Unit,
     onLogout: () -> Unit
 ) {
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
+
+    // --- Стан для модалки Служби Підтримки ---
+    var showFeedbackDialog by remember { mutableStateOf(false) }
+    var feedbackText by remember { mutableStateOf("") }
+    var isFeedbackLoading by remember { mutableStateOf(false) }
+
     Scaffold(
         containerColor = AppColors.Background,
         topBar = {
@@ -2200,6 +2208,15 @@ fun ProfileScreen(
 
                     Spacer(modifier = Modifier.height(24.dp))
 
+                    // --- КНОПКА СЛУЖБИ ПІДТРИМКИ ---
+                    ModernButton(
+                        text = "Написати в підтримку",
+                        onClick = { showFeedbackDialog = true },
+                        modifier = Modifier.fillMaxWidth().padding(bottom = 16.dp),
+                        backgroundColor = Color(0xFF6366F1), // Колір Індиго (як у веб-версії)
+                        icon = Icons.Rounded.Send
+                    )
+
                     // Кнопка выхода
                     OutlinedButton(
                         onClick = onLogout,
@@ -2214,6 +2231,94 @@ fun ProfileScreen(
                 }
             } else {
                 Text("Помилка завантаження профілю", modifier = Modifier.align(Alignment.Center), color = AppColors.Error)
+            }
+
+            // --- ДІАЛОГ СЛУЖБИ ПІДТРИМКИ ---
+            if (showFeedbackDialog && profile != null) {
+                AlertDialog(
+                    onDismissRequest = { if (!isFeedbackLoading) showFeedbackDialog = false },
+                    title = {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Box(
+                                modifier = Modifier.size(40.dp).background(Color(0xFF6366F1).copy(alpha = 0.15f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Info, contentDescription = null, tint = Color(0xFF6366F1))
+                            }
+                            Spacer(modifier = Modifier.width(12.dp))
+                            Text("Служба підтримки", fontWeight = FontWeight.Bold, color = AppColors.TextPrimary, fontSize = 20.sp)
+                        }
+                    },
+                    text = {
+                        Column {
+                            Text("Опишіть вашу проблему або пропозицію, і ми обов'язково вам допоможемо.", fontSize = 14.sp, color = AppColors.TextSecondary)
+                            Spacer(modifier = Modifier.height(16.dp))
+                            OutlinedTextField(
+                                value = feedbackText,
+                                onValueChange = { feedbackText = it },
+                                placeholder = { Text("Почніть писати тут...", color = AppColors.TextSecondary) },
+                                modifier = Modifier.fillMaxWidth().height(120.dp),
+                                shape = RoundedCornerShape(16.dp),
+                                colors = OutlinedTextFieldDefaults.colors(
+                                    focusedBorderColor = Color(0xFF6366F1),
+                                    unfocusedBorderColor = Color.LightGray.copy(alpha = 0.5f),
+                                    focusedContainerColor = AppColors.Surface,
+                                    unfocusedContainerColor = AppColors.Background.copy(alpha = 0.5f)
+                                ),
+                                maxLines = 5
+                            )
+                        }
+                    },
+                    confirmButton = {
+                        Button(
+                            onClick = {
+                                if (feedbackText.isBlank()) return@Button
+                                coroutineScope.launch {
+                                    isFeedbackLoading = true
+                                    try {
+                                        val res = RetrofitClient.apiService.sendFeedback(
+                                            role = "Кур'єр",
+                                            name = profile.name,
+                                            phone = profile.phone,
+                                            message = feedbackText.trim()
+                                        )
+                                        if (res.isSuccessful) {
+                                            Toast.makeText(context, "✅ Дякуємо! Ваше звернення відправлено.", Toast.LENGTH_LONG).show()
+                                            showFeedbackDialog = false
+                                            feedbackText = ""
+                                        } else {
+                                            Toast.makeText(context, "❌ Помилка сервера. Спробуйте пізніше.", Toast.LENGTH_SHORT).show()
+                                        }
+                                    } catch (e: Exception) {
+                                        Toast.makeText(context, "⚠️ Помилка з'єднання.", Toast.LENGTH_SHORT).show()
+                                    } finally {
+                                        isFeedbackLoading = false
+                                    }
+                                }
+                            },
+                            enabled = !isFeedbackLoading && feedbackText.isNotBlank(),
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                            shape = RoundedCornerShape(12.dp)
+                        ) {
+                            if (isFeedbackLoading) {
+                                CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                            } else {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                                    Spacer(modifier = Modifier.width(8.dp))
+                                    Text("Відправити")
+                                }
+                            }
+                        }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { showFeedbackDialog = false }, enabled = !isFeedbackLoading) {
+                            Text("Скасувати", color = AppColors.TextSecondary)
+                        }
+                    },
+                    containerColor = AppColors.Surface,
+                    shape = RoundedCornerShape(24.dp)
+                )
             }
         }
     }

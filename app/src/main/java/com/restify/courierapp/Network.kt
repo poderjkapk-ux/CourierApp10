@@ -304,6 +304,17 @@ interface ApiService {
         @Header("Cookie") cookie: String
     ): List<Motivator>
     // ---------------------------
+
+    // --- СЛУЖБА ПІДТРИМКИ (ЗВОРОТНИЙ ЗВ'ЯЗОК) ---
+    @FormUrlEncoded
+    @POST("/api/feedback")
+    suspend fun sendFeedback(
+        @Field("role") role: String,
+        @Field("name") name: String,
+        @Field("phone") phone: String,
+        @Field("message") message: String
+    ): retrofit2.Response<StatusResponse>
+    // --------------------------------------------
 }
 
 // ==========================================
@@ -372,7 +383,6 @@ class WebSocketManager(private val client: OkHttpClient) {
                 stopPingJob()
 
                 if (!isIntentionallyClosed) {
-                    // ТУТ ИСПРАВЛЕНИЕ: добавлены скобки code()
                     val httpCode = response?.code() ?: 0
 
                     // Перевіряємо, чи не викликана помилка простроченою сесією (401 або 403)
