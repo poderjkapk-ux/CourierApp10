@@ -69,6 +69,23 @@ data class OpenOrder(
     @SerializedName("estimated_ready_at") val readyAt: String? // ДОДАНО ДЛЯ ТАЙМЕРІВ
 )
 
+// --- НОВІ МОДЕЛІ ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ ---
+data class ActiveJobSummary(
+    val id: Int,
+    val status: String,
+    @SerializedName("partner_name") val partnerName: String,
+    @SerializedName("customer_address") val customerAddress: String,
+    @SerializedName("delivery_fee") val deliveryFee: Double,
+    @SerializedName("order_price") val orderPrice: Double,
+    @SerializedName("payment_type") val paymentType: String
+)
+
+data class ActiveJobsListResponse(
+    val active: Boolean,
+    val jobs: List<ActiveJobSummary>
+)
+// ----------------------------------------
+
 data class ActiveJobResponse(
     val active: Boolean,
     val job: ActiveJobDetail?
@@ -189,10 +206,18 @@ interface ApiService {
         @Query("lon") lon: Double
     ): List<OpenOrder>
 
+    // Оновлено: додано job_id для вибору конкретного замовлення
     @GET("/api/courier/active_job")
     suspend fun getActiveJob(
-        @Header("Cookie") cookie: String
+        @Header("Cookie") cookie: String,
+        @Query("job_id") jobId: Int? = null
     ): ActiveJobResponse
+
+    // Оновлено: додано отримання списку всіх активних замовлень
+    @GET("/api/courier/active_jobs")
+    suspend fun getActiveJobs(
+        @Header("Cookie") cookie: String
+    ): ActiveJobsListResponse
 
     @FormUrlEncoded
     @POST("/api/courier/accept_order")
@@ -200,6 +225,14 @@ interface ApiService {
         @Header("Cookie") cookie: String,
         @Field("job_id") jobId: Int
     ): retrofit2.Response<StatusResponse>
+
+    // Оновлено: додано відмову від персонального замовлення
+    @FormUrlEncoded
+    @POST("/api/courier/decline_direct_order")
+    suspend fun declineDirectOrder(
+        @Header("Cookie") cookie: String,
+        @Field("job_id") jobId: Int
+    ): StatusResponse
 
     @FormUrlEncoded
     @POST("/api/courier/arrived_pickup")

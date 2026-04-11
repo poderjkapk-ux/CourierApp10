@@ -14,6 +14,7 @@ import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.MaterialTheme
@@ -38,6 +39,7 @@ import com.google.accompanist.permissions.rememberMultiplePermissionsState
 import com.google.android.gms.location.FusedLocationProviderClient
 import com.google.android.gms.location.LocationServices
 import com.google.firebase.messaging.FirebaseMessaging
+import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
@@ -103,6 +105,10 @@ class MainActivity : ComponentActivity() {
                     // ГЛОБАЛЬНА ЗМІННА СТАТУСУ: Тепер статус не втрачається при переходах!
                     var isOnline by rememberSaveable { mutableStateOf(false) }
 
+                    // ГЛОБАЛЬНИЙ СТАН: Персональне замовлення (Direct Offer)
+                    var directOffer by remember { mutableStateOf<OpenOrder?>(null) }
+                    var isDirectOfferLoading by remember { mutableStateOf(false) }
+
                     // --- Глобальна функція для примусового логауту або виходу з акаунту ---
                     fun forceLogout(isExplicitLogout: Boolean = false) {
                         coroutineScope.launch(Dispatchers.IO) {
@@ -164,6 +170,26 @@ class MainActivity : ComponentActivity() {
                     DisposableEffect(Unit) {
                         onDispose {
                             RetrofitClient.webSocketManager.disconnect()
+                        }
+                    }
+
+                    // --- ГЛОБАЛЬНЕ ПРОСЛУХОВУВАННЯ WEBSOCKET (ДЛЯ ПЕРСОНАЛЬНИХ ЗАМОВЛЕНЬ) ---
+                    LaunchedEffect(Unit) {
+                        RetrofitClient.webSocketManager.messages.collect { messageJson ->
+                            try {
+                                val json = JSONObject(messageJson)
+                                val type = json.getString("type")
+
+                                if (type == "auth_error") {
+                                    forceLogout()
+                                } else if (type == "direct_offer") {
+                                    // БЕЗПЕЧНИЙ ПАРСИНГ: шукаємо дані в "data", "order" або беремо сам json
+                                    val orderObj = json.optJSONObject("data") ?: json.optJSONObject("order") ?: json.optJSONObject("job") ?: json
+                                    directOffer = Gson().fromJson(orderObj.toString(), OpenOrder::class.java)
+                                }
+                            } catch (e: Exception) {
+                                e.printStackTrace()
+                            }
                         }
                     }
                     // ---------------------------------------------------
@@ -248,419 +274,482 @@ class MainActivity : ComponentActivity() {
                         "login"
                     }
 
-                    NavHost(navController = navController, startDestination = startDestination) {
+                    Box(modifier = Modifier.fillMaxSize()) {
+                        NavHost(navController = navController, startDestination = startDestination) {
 
-                        // РОУТ 0: ОНБОРДИНГ
-                        composable("onboarding") {
-                            OnboardingScreen(
-                                onFinish = {
-                                    setFirstLaunchCompleted()
-                                    navController.navigate("login") {
-                                        popUpTo("onboarding") { inclusive = true }
+                            // РОУТ 0: ОНБОРДИНГ
+                            composable("onboarding") {
+                                OnboardingScreen(
+                                    onFinish = {
+                                        setFirstLaunchCompleted()
+                                        navController.navigate("login") {
+                                            popUpTo("onboarding") { inclusive = true }
+                                        }
                                     }
-                                }
-                            )
-                        }
+                                )
+                            }
 
-                        // РОУТ 1: ЛОГІН
-                        composable("login") {
-                            var isLoading by remember { mutableStateOf(false) }
-                            var errorMessage by remember { mutableStateOf<String?>(null) }
+                            // РОУТ 1: ЛОГІН
+                            composable("login") {
+                                var isLoading by remember { mutableStateOf(false) }
+                                var errorMessage by remember { mutableStateOf<String?>(null) }
 
-                            LoginScreen(
-                                isLoading = isLoading,
-                                errorMessage = errorMessage,
-                                onNavigateToRegister = {
-                                    navController.navigate("register")
-                                },
-                                onLoginClick = { phone, password ->
-                                    isLoading = true
-                                    errorMessage = null
-                                    coroutineScope.launch {
-                                        try {
-                                            val response = RetrofitClient.apiService.login(phone, password)
-                                            if (response.isSuccessful || response.code() == 302 || response.code() == 303) {
-                                                val tokenCookie = response.headers().values("Set-Cookie").firstOrNull { it.contains("courier_token") }
+                                LoginScreen(
+                                    isLoading = isLoading,
+                                    errorMessage = errorMessage,
+                                    onNavigateToRegister = {
+                                        navController.navigate("register")
+                                    },
+                                    onLoginClick = { phone, password ->
+                                        isLoading = true
+                                        errorMessage = null
+                                        coroutineScope.launch {
+                                            try {
+                                                val response = RetrofitClient.apiService.login(phone, password)
+                                                if (response.isSuccessful || response.code() == 302 || response.code() == 303) {
+                                                    val tokenCookie = response.headers().values("Set-Cookie").firstOrNull { it.contains("courier_token") }
 
-                                                if (tokenCookie != null) {
-                                                    val cookieValue = tokenCookie.split(";")[0]
-                                                    sharedPref.edit().putString("cookie", cookieValue).apply()
+                                                    if (tokenCookie != null) {
+                                                        val cookieValue = tokenCookie.split(";")[0]
+                                                        sharedPref.edit().putString("cookie", cookieValue).apply()
 
-                                                    // Підключаємо WebSocket одразу після успішного входу
-                                                    RetrofitClient.webSocketManager.connect(cookieValue)
+                                                        // Підключаємо WebSocket одразу після успішного входу
+                                                        RetrofitClient.webSocketManager.connect(cookieValue)
 
-                                                    // Відправляємо FCM токен після успішного логіну
-                                                    FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
-                                                        if (task.isSuccessful) {
-                                                            val token = task.result
-                                                            coroutineScope.launch {
-                                                                try {
-                                                                    RetrofitClient.apiService.sendFcmToken(cookieValue, token)
-                                                                    Log.d("FCM_TOKEN", "Токен успішно відправлено після логіну: $token")
-                                                                } catch (e: Exception) {
-                                                                    Log.e("FCM_TOKEN", "Помилка відправки токена після логіну: ${e.message}")
+                                                        // Відправляємо FCM токен після успішного логіну
+                                                        FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
+                                                            if (task.isSuccessful) {
+                                                                val token = task.result
+                                                                coroutineScope.launch {
+                                                                    try {
+                                                                        RetrofitClient.apiService.sendFcmToken(cookieValue, token)
+                                                                        Log.d("FCM_TOKEN", "Токен успішно відправлено після логіну: $token")
+                                                                    } catch (e: Exception) {
+                                                                        Log.e("FCM_TOKEN", "Помилка відправки токена після логіну: ${e.message}")
+                                                                    }
                                                                 }
                                                             }
                                                         }
-                                                    }
 
-                                                    navController.navigate("orders") {
-                                                        popUpTo("login") { inclusive = true }
+                                                        navController.navigate("orders") {
+                                                            popUpTo("login") { inclusive = true }
+                                                        }
+                                                    } else {
+                                                        errorMessage = "Помилка: Немає токена"
                                                     }
                                                 } else {
-                                                    errorMessage = "Помилка: Немає токена"
+                                                    errorMessage = "Невірний телефон або пароль"
                                                 }
-                                            } else {
-                                                errorMessage = "Невірний телефон або пароль"
+                                            } catch (e: Exception) {
+                                                errorMessage = "Помилка мережі"
+                                            } finally {
+                                                isLoading = false
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+
+                            // РОУТ 1.5: РЕЄСТРАЦІЯ
+                            composable("register") {
+                                RegistrationScreen(
+                                    onRegisterSuccess = {
+                                        Toast.makeText(this@MainActivity, "Реєстрація успішна! Очікуйте активації акаунта адміністратором.", Toast.LENGTH_LONG).show()
+                                        navController.navigate("login") {
+                                            popUpTo("register") { inclusive = true }
+                                        }
+                                    },
+                                    onBackToLogin = {
+                                        navController.popBackStack()
+                                    }
+                                )
+                            }
+
+                            // РОУТ 2: СПИСОК ЗАМОВЛЕНЬ
+                            composable("orders") {
+                                var ordersList by remember { mutableStateOf<List<OpenOrder>>(emptyList()) }
+                                var announcementsList by remember { mutableStateOf<List<Announcement>>(emptyList()) }
+                                var isLoading by remember { mutableStateOf(true) }
+
+                                val currentCookie = sharedPref.getString("cookie", "") ?: ""
+
+                                // --- СТАН ДЛЯ ВІДСТЕЖЕННЯ УВІМКНЕНОГО GPS ---
+                                val context = LocalContext.current
+                                val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
+                                var isGpsEnabled by remember { mutableStateOf(true) }
+
+                                // параметри для "тихого" оновлення
+                                fun fetchData(isSilent: Boolean = false) {
+                                    if (!isSilent) isLoading = true
+                                    coroutineScope.launch {
+                                        try {
+                                            // --- ОНОВЛЕННЯ ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ ---
+                                            val activeJobRes = RetrofitClient.apiService.getActiveJobs(currentCookie)
+                                            if (activeJobRes.active && activeJobRes.jobs.isNotEmpty()) {
+                                                navController.navigate("active_order") {
+                                                    popUpTo("orders") { inclusive = true }
+                                                }
+                                                return@launch
+                                            }
+
+                                            // Завантажуємо оголошення
+                                            try {
+                                                announcementsList = RetrofitClient.apiService.getAnnouncements(currentCookie)
+                                            } catch (e: Exception) {
+                                                Log.e("Announcements", "Failed to load announcements: ${e.message}")
+                                            }
+
+                                            // Отримуємо реальні координати
+                                            var currentLat = 46.4825
+                                            var currentLon = 30.7233
+
+                                            if (hasLocationPermission) {
+                                                val location = getLastKnownLocation()
+                                                if (location != null) {
+                                                    // --- ЗАХИСТ ВІД РЕБ (GPS SPOOFING) ---
+                                                    if (location.latitude > 45.0 && location.latitude < 48.0 && location.longitude > 29.0 && location.longitude < 32.0) {
+                                                        currentLat = location.latitude
+                                                        currentLon = location.longitude
+                                                    } else {
+                                                        Log.w("GPS_FILTER", "РЕБ або збій! Фейкова локація проігнорована: ${location.latitude}, ${location.longitude}")
+                                                    }
+                                                }
+                                            }
+
+                                            ordersList = RetrofitClient.apiService.getOpenOrders(
+                                                currentCookie,
+                                                lat = currentLat,
+                                                lon = currentLon
+                                            )
+                                        } catch (e: retrofit2.HttpException) {
+                                            if (e.code() == 401 || e.code() == 403) {
+                                                forceLogout()
+                                            } else if (!isSilent) {
+                                                Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
                                             }
                                         } catch (e: Exception) {
-                                            errorMessage = "Помилка мережі"
+                                            if (!isSilent) Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
+                                        } finally {
+                                            if (!isSilent) isLoading = false
+                                        }
+                                    }
+                                }
+
+                                val lifecycleOwner = LocalLifecycleOwner.current
+                                DisposableEffect(lifecycleOwner) {
+                                    val observer = LifecycleEventObserver { _, event ->
+                                        if (event == Lifecycle.Event.ON_RESUME) {
+                                            isGpsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                                                locationManager.isLocationEnabled
+                                            } else {
+                                                locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
+                                                        locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
+                                            }
+                                            fetchData(isSilent = true)
+                                        }
+                                    }
+                                    lifecycleOwner.lifecycle.addObserver(observer)
+                                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                                }
+
+                                // При відкритті екрану завантажуємо реальний профіль і статус
+                                LaunchedEffect(Unit) {
+                                    coroutineScope.launch {
+                                        try {
+                                            val profile = RetrofitClient.apiService.getProfile(currentCookie)
+                                            isOnline = profile.isOnline // Це автоматично запустить/зупинить LocationTracker
+                                        } catch (e: retrofit2.HttpException) {
+                                            if (e.code() == 401 || e.code() == 403) forceLogout()
+                                        } catch (e: Exception) {
+                                            Log.e("SYNC", "Не вдалося отримати профіль для перевірки статусу")
+                                        }
+                                    }
+                                    fetchData(isSilent = false)
+                                }
+
+                                // Фонове тихе оновлення
+                                LaunchedEffect(Unit) {
+                                    while (true) {
+                                        kotlinx.coroutines.delay(30000)
+                                        fetchData(isSilent = true)
+                                    }
+                                }
+
+                                // Слухаємо WebSocket події для миттєвого оновлення списку або логауту
+                                LaunchedEffect(Unit) {
+                                    RetrofitClient.webSocketManager.messages.collect { messageJson ->
+                                        try {
+                                            val json = JSONObject(messageJson)
+                                            val type = json.getString("type")
+
+                                            if (type == "auth_error") {
+                                                forceLogout() // <--- Обробка помилки 401/403 від WebSocket
+                                            } else if (type == "new_order" || type == "job_update" || type == "job_ready") {
+                                                fetchData(isSilent = true) // Оновлюємо список тихо
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                }
+
+                                OrdersListScreen(
+                                    orders = ordersList,
+                                    announcements = announcementsList,
+                                    isLoading = isLoading,
+                                    isOnline = isOnline,
+                                    isGpsEnabled = isGpsEnabled, // ПЕРЕДАЄМО СТАТУС GPS НА ЕКРАН
+                                    onNavigateToHistory = {
+                                        navController.navigate("history")
+                                    },
+                                    onNavigateToProfile = {
+                                        navController.navigate("profile") // Перехід на екран профілю
+                                    },
+                                    onDismissAnnouncement = { annId ->
+                                        announcementsList = announcementsList.filter { it.id != annId }
+                                        coroutineScope.launch {
+                                            try {
+                                                RetrofitClient.apiService.dismissAnnouncement(currentCookie, annId)
+                                            } catch (e: Exception) {
+                                                Log.e("Announcements", "Failed to dismiss: ${e.message}")
+                                            }
+                                        }
+                                    },
+                                    onToggleStatus = { _ ->
+                                        coroutineScope.launch {
+                                            try {
+                                                val response = RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
+                                                isOnline = response.isOnline
+                                            } catch (e: retrofit2.HttpException) {
+                                                if (e.code() == 401 || e.code() == 403) {
+                                                    forceLogout()
+                                                } else {
+                                                    Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
+                                            }
+                                        }
+                                    },
+                                    onRefresh = { fetchData(isSilent = false) },
+                                    onAcceptOrder = { jobId, onComplete ->
+                                        coroutineScope.launch {
+                                            try {
+                                                val res = RetrofitClient.apiService.acceptOrder(currentCookie, jobId)
+                                                if (res.isSuccessful) {
+                                                    fetchData(isSilent = false)
+                                                } else {
+                                                    Toast.makeText(this@MainActivity, "Замовлення вже забрали", Toast.LENGTH_LONG).show()
+                                                    fetchData(isSilent = false)
+                                                }
+                                            } catch (e: Exception) {
+                                                Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
+                                            } finally {
+                                                onComplete()
+                                            }
+                                        }
+                                    }
+                                )
+                            }
+
+                            // РОУТ 3: АКТИВНІ ЗАМОВЛЕННЯ (ОНОВЛЕНО ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ)
+                            composable("active_order") {
+                                var activeJob by remember { mutableStateOf<ActiveJobDetail?>(null) }
+                                var activeJobsList by remember { mutableStateOf<List<ActiveJobSummary>>(emptyList()) }
+                                var selectedJobId by remember { mutableStateOf<Int?>(null) }
+                                val currentCookie = sharedPref.getString("cookie", "") ?: ""
+
+                                fun fetchActiveData() {
+                                    coroutineScope.launch {
+                                        try {
+                                            val resList = RetrofitClient.apiService.getActiveJobs(currentCookie)
+                                            if (resList.active && resList.jobs.isNotEmpty()) {
+                                                activeJobsList = resList.jobs
+                                                val targetId = if (activeJobsList.any { it.id == selectedJobId }) selectedJobId else activeJobsList.first().id
+                                                selectedJobId = targetId
+
+                                                val resJob = RetrofitClient.apiService.getActiveJob(currentCookie, targetId)
+                                                if (resJob.active && resJob.job != null) {
+                                                    activeJob = resJob.job
+                                                }
+                                            } else {
+                                                navController.navigate("orders") { popUpTo("active_order") { inclusive = true } }
+                                            }
+                                        } catch (e: retrofit2.HttpException) {
+                                            if (e.code() == 401 || e.code() == 403) forceLogout()
+                                        } catch (e: Exception) {}
+                                    }
+                                }
+
+                                val lifecycleOwner = LocalLifecycleOwner.current
+                                DisposableEffect(lifecycleOwner) {
+                                    val observer = LifecycleEventObserver { _, event ->
+                                        if (event == Lifecycle.Event.ON_RESUME) {
+                                            fetchActiveData()
+                                        }
+                                    }
+                                    lifecycleOwner.lifecycle.addObserver(observer)
+                                    onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+                                }
+
+                                LaunchedEffect(Unit) { fetchActiveData() }
+
+                                // Слухаємо WebSocket події
+                                LaunchedEffect(Unit) {
+                                    RetrofitClient.webSocketManager.messages.collect { messageJson ->
+                                        try {
+                                            val json = JSONObject(messageJson)
+                                            val type = json.getString("type")
+
+                                            if (type == "auth_error") {
+                                                forceLogout()
+                                            } else if (type == "job_update" || type == "job_ready" || type == "new_order") {
+                                                fetchActiveData()
+                                            }
+                                        } catch (e: Exception) {
+                                            e.printStackTrace()
+                                        }
+                                    }
+                                }
+
+                                activeJob?.let { job ->
+                                    ActiveOrderScreen(
+                                        job = job,
+                                        activeJobsList = activeJobsList,
+                                        onJobSelected = { id ->
+                                            selectedJobId = id
+                                            fetchActiveData()
+                                        },
+                                        cookie = currentCookie,
+                                        onRefresh = { fetchActiveData() },
+                                        onArrivedPickup = { jobId ->
+                                            coroutineScope.launch {
+                                                try { RetrofitClient.apiService.arrivedAtPickup(currentCookie, jobId); fetchActiveData() } catch (e: Exception) {}
+                                            }
+                                        },
+                                        onUpdateStatus = { jobId, status ->
+                                            coroutineScope.launch {
+                                                try { RetrofitClient.apiService.updateJobStatus(currentCookie, jobId, status); fetchActiveData() } catch (e: Exception) {}
+                                            }
+                                        }
+                                    )
+                                }
+                            }
+
+                            // РОУТ 4: ІСТОРІЯ ЗАМОВЛЕНЬ
+                            composable("history") {
+                                var historyList by remember { mutableStateOf<List<HistoryOrder>>(emptyList()) }
+                                var isLoading by remember { mutableStateOf(true) }
+                                val currentCookie = sharedPref.getString("cookie", "") ?: ""
+
+                                fun fetchHistory() {
+                                    isLoading = true
+                                    coroutineScope.launch {
+                                        try {
+                                            historyList = RetrofitClient.apiService.getHistory(currentCookie)
+                                        } catch (e: retrofit2.HttpException) {
+                                            if (e.code() == 401 || e.code() == 403) forceLogout()
+                                        } catch (e: Exception) {
+                                            Toast.makeText(this@MainActivity, "Помилка завантаження історії", Toast.LENGTH_SHORT).show()
                                         } finally {
                                             isLoading = false
                                         }
                                     }
                                 }
-                            )
-                        }
 
-                        // РОУТ 1.5: РЕЄСТРАЦІЯ
-                        composable("register") {
-                            RegistrationScreen(
-                                onRegisterSuccess = {
-                                    Toast.makeText(this@MainActivity, "Реєстрація успішна! Очікуйте активації акаунта адміністратором.", Toast.LENGTH_LONG).show()
-                                    navController.navigate("login") {
-                                        popUpTo("register") { inclusive = true }
-                                    }
-                                },
-                                onBackToLogin = {
-                                    navController.popBackStack()
-                                }
-                            )
-                        }
+                                LaunchedEffect(Unit) { fetchHistory() }
 
-                        // РОУТ 2: СПИСОК ЗАМОВЛЕНЬ
-                        composable("orders") {
-                            var ordersList by remember { mutableStateOf<List<OpenOrder>>(emptyList()) }
-                            var announcementsList by remember { mutableStateOf<List<Announcement>>(emptyList()) }
-                            var isLoading by remember { mutableStateOf(true) }
+                                HistoryScreen(
+                                    history = historyList,
+                                    isLoading = isLoading,
+                                    onBack = { navController.popBackStack() },
+                                    onRefresh = { fetchHistory() }
+                                )
+                            }
 
-                            val currentCookie = sharedPref.getString("cookie", "") ?: ""
+                            // РОУТ 5: ПРОФІЛЬ КУР'ЄРА
+                            composable("profile") {
+                                var profileData by remember { mutableStateOf<CourierProfile?>(null) }
+                                var motivatorsList by remember { mutableStateOf<List<Motivator>>(emptyList()) }
+                                var isLoading by remember { mutableStateOf(true) }
+                                val currentCookie = sharedPref.getString("cookie", "") ?: ""
 
-                            // --- СТАН ДЛЯ ВІДСТЕЖЕННЯ УВІМКНЕНОГО GPS ---
-                            val context = LocalContext.current
-                            val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
-                            var isGpsEnabled by remember { mutableStateOf(true) }
-
-                            // параметри для "тихого" оновлення
-                            fun fetchData(isSilent: Boolean = false) {
-                                if (!isSilent) isLoading = true
-                                coroutineScope.launch {
-                                    try {
-                                        val activeJobRes = RetrofitClient.apiService.getActiveJob(currentCookie)
-                                        if (activeJobRes.active) {
-                                            navController.navigate("active_order") {
-                                                popUpTo("orders") { inclusive = true }
-                                            }
-                                            return@launch
-                                        }
-
-                                        // Завантажуємо оголошення
+                                LaunchedEffect(Unit) {
+                                    coroutineScope.launch {
                                         try {
-                                            announcementsList = RetrofitClient.apiService.getAnnouncements(currentCookie)
-                                        } catch (e: Exception) {
-                                            Log.e("Announcements", "Failed to load announcements: ${e.message}")
-                                        }
-
-                                        // Отримуємо реальні координати
-                                        var currentLat = 46.4825
-                                        var currentLon = 30.7233
-
-                                        if (hasLocationPermission) {
-                                            val location = getLastKnownLocation()
-                                            if (location != null) {
-                                                // --- ЗАХИСТ ВІД РЕБ (GPS SPOOFING) ---
-                                                if (location.latitude > 45.0 && location.latitude < 48.0 && location.longitude > 29.0 && location.longitude < 32.0) {
-                                                    currentLat = location.latitude
-                                                    currentLon = location.longitude
-                                                } else {
-                                                    Log.w("GPS_FILTER", "РЕБ або збій! Фейкова локація проігнорована: ${location.latitude}, ${location.longitude}")
+                                            // Одночасне завантаження профілю та мотиваторів
+                                            val profileTask = launch { profileData = RetrofitClient.apiService.getProfile(currentCookie) }
+                                            val motivatorsTask = launch {
+                                                try {
+                                                    motivatorsList = RetrofitClient.apiService.getMotivators(currentCookie)
+                                                } catch (e: Exception) {
+                                                    Log.e("Motivators", "Помилка завантаження мотиваторів: ${e.message}")
                                                 }
                                             }
-                                        }
 
-                                        ordersList = RetrofitClient.apiService.getOpenOrders(
-                                            currentCookie,
-                                            lat = currentLat,
-                                            lon = currentLon
-                                        )
-                                    } catch (e: retrofit2.HttpException) {
-                                        if (e.code() == 401 || e.code() == 403) {
-                                            forceLogout()
-                                        } else if (!isSilent) {
-                                            Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
-                                        }
-                                    } catch (e: Exception) {
-                                        if (!isSilent) Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        if (!isSilent) isLoading = false
-                                    }
-                                }
-                            }
+                                            profileTask.join()
+                                            motivatorsTask.join()
 
-                            val lifecycleOwner = LocalLifecycleOwner.current
-                            DisposableEffect(lifecycleOwner) {
-                                val observer = LifecycleEventObserver { _, event ->
-                                    if (event == Lifecycle.Event.ON_RESUME) {
-                                        isGpsEnabled = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                                            locationManager.isLocationEnabled
-                                        } else {
-                                            locationManager.isProviderEnabled(LocationManager.GPS_PROVIDER) ||
-                                                    locationManager.isProviderEnabled(LocationManager.NETWORK_PROVIDER)
-                                        }
-                                        fetchData(isSilent = true)
-                                    }
-                                }
-                                lifecycleOwner.lifecycle.addObserver(observer)
-                                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                            }
-
-                            // При відкритті екрану завантажуємо реальний профіль і статус
-                            LaunchedEffect(Unit) {
-                                coroutineScope.launch {
-                                    try {
-                                        val profile = RetrofitClient.apiService.getProfile(currentCookie)
-                                        isOnline = profile.isOnline // Це автоматично запустить/зупинить LocationTracker
-                                    } catch (e: retrofit2.HttpException) {
-                                        if (e.code() == 401 || e.code() == 403) forceLogout()
-                                    } catch (e: Exception) {
-                                        Log.e("SYNC", "Не вдалося отримати профіль для перевірки статусу")
-                                    }
-                                }
-                                fetchData(isSilent = false)
-                            }
-
-                            // Фонове тихе оновлення
-                            LaunchedEffect(Unit) {
-                                while (true) {
-                                    kotlinx.coroutines.delay(30000)
-                                    fetchData(isSilent = true)
-                                }
-                            }
-
-                            // Слухаємо WebSocket події для миттєвого оновлення списку або логауту
-                            LaunchedEffect(Unit) {
-                                RetrofitClient.webSocketManager.messages.collect { messageJson ->
-                                    try {
-                                        val json = JSONObject(messageJson)
-                                        val type = json.getString("type")
-
-                                        if (type == "auth_error") {
-                                            forceLogout() // <--- Обробка помилки 401/403 від WebSocket
-                                        } else if (type == "new_order" || type == "job_update") {
-                                            fetchData(isSilent = true) // Оновлюємо список тихо
-                                        }
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                }
-                            }
-
-                            OrdersListScreen(
-                                orders = ordersList,
-                                announcements = announcementsList,
-                                isLoading = isLoading,
-                                isOnline = isOnline,
-                                isGpsEnabled = isGpsEnabled, // ПЕРЕДАЄМО СТАТУС GPS НА ЕКРАН
-                                onNavigateToHistory = {
-                                    navController.navigate("history")
-                                },
-                                onNavigateToProfile = {
-                                    navController.navigate("profile") // Перехід на екран профілю
-                                },
-                                onDismissAnnouncement = { annId ->
-                                    announcementsList = announcementsList.filter { it.id != annId }
-                                    coroutineScope.launch {
-                                        try {
-                                            RetrofitClient.apiService.dismissAnnouncement(currentCookie, annId)
-                                        } catch (e: Exception) {
-                                            Log.e("Announcements", "Failed to dismiss: ${e.message}")
-                                        }
-                                    }
-                                },
-                                onToggleStatus = { _ ->
-                                    coroutineScope.launch {
-                                        try {
-                                            val response = RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
-                                            isOnline = response.isOnline
                                         } catch (e: retrofit2.HttpException) {
-                                            if (e.code() == 401 || e.code() == 403) {
-                                                forceLogout()
-                                            } else {
-                                                Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
-                                            }
+                                            if (e.code() == 401 || e.code() == 403) forceLogout()
                                         } catch (e: Exception) {
-                                            Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
-                                        }
-                                    }
-                                },
-                                onRefresh = { fetchData(isSilent = false) },
-                                onAcceptOrder = { jobId, onComplete ->
-                                    coroutineScope.launch {
-                                        try {
-                                            val res = RetrofitClient.apiService.acceptOrder(currentCookie, jobId)
-                                            if (res.isSuccessful) {
-                                                fetchData(isSilent = false)
-                                            } else {
-                                                Toast.makeText(this@MainActivity, "Замовлення вже забрали", Toast.LENGTH_LONG).show()
-                                                fetchData(isSilent = false)
-                                            }
-                                        } catch (e: Exception) {
-                                            Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
+                                            Toast.makeText(this@MainActivity, "Помилка завантаження профілю", Toast.LENGTH_SHORT).show()
                                         } finally {
-                                            onComplete()
+                                            isLoading = false
                                         }
                                     }
                                 }
-                            )
-                        }
 
-                        // РОУТ 3: АКТИВНЕ ЗАМОВЛЕННЯ
-                        composable("active_order") {
-                            var activeJob by remember { mutableStateOf<ActiveJobDetail?>(null) }
-                            val currentCookie = sharedPref.getString("cookie", "") ?: ""
-
-                            fun fetchActiveJob() {
-                                coroutineScope.launch {
-                                    try {
-                                        val res = RetrofitClient.apiService.getActiveJob(currentCookie)
-                                        if (res.active && res.job != null) activeJob = res.job
-                                        else navController.navigate("orders") { popUpTo("active_order") { inclusive = true } }
-                                    } catch (e: retrofit2.HttpException) {
-                                        if (e.code() == 401 || e.code() == 403) forceLogout()
-                                    } catch (e: Exception) {}
-                                }
-                            }
-
-                            val lifecycleOwner = LocalLifecycleOwner.current
-                            DisposableEffect(lifecycleOwner) {
-                                val observer = LifecycleEventObserver { _, event ->
-                                    if (event == Lifecycle.Event.ON_RESUME) {
-                                        fetchActiveJob()
-                                    }
-                                }
-                                lifecycleOwner.lifecycle.addObserver(observer)
-                                onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-                            }
-
-                            LaunchedEffect(Unit) { fetchActiveJob() }
-
-                            // Слухаємо WebSocket події для миттєвого оновлення замовлення або логауту
-                            LaunchedEffect(Unit) {
-                                RetrofitClient.webSocketManager.messages.collect { messageJson ->
-                                    try {
-                                        val json = JSONObject(messageJson)
-                                        val type = json.getString("type")
-
-                                        if (type == "auth_error") {
-                                            forceLogout() // <--- Обробка помилки 401/403 від WebSocket
-                                        } else if (type == "job_update" || type == "job_ready") {
-                                            fetchActiveJob()
-                                        }
-                                    } catch (e: Exception) {
-                                        e.printStackTrace()
-                                    }
-                                }
-                            }
-
-                            activeJob?.let { job ->
-                                ActiveOrderScreen(
-                                    job = job,
-                                    cookie = currentCookie,
-                                    onRefresh = { fetchActiveJob() },
-                                    onArrivedPickup = { jobId ->
-                                        coroutineScope.launch {
-                                            try { RetrofitClient.apiService.arrivedAtPickup(currentCookie, jobId); fetchActiveJob() } catch (e: Exception) {}
-                                        }
-                                    },
-                                    onUpdateStatus = { jobId, status ->
-                                        coroutineScope.launch {
-                                            try { RetrofitClient.apiService.updateJobStatus(currentCookie, jobId, status); fetchActiveJob() } catch (e: Exception) {}
-                                        }
-                                    }
+                                ProfileScreen(
+                                    profile = profileData,
+                                    motivators = motivatorsList,
+                                    isLoading = isLoading,
+                                    onBack = { navController.popBackStack() },
+                                    onLogout = { forceLogout(isExplicitLogout = true) }
                                 )
                             }
                         }
 
-                        // РОУТ 4: ІСТОРІЯ ЗАМОВЛЕНЬ
-                        composable("history") {
-                            var historyList by remember { mutableStateOf<List<HistoryOrder>>(emptyList()) }
-                            var isLoading by remember { mutableStateOf(true) }
-                            val currentCookie = sharedPref.getString("cookie", "") ?: ""
-
-                            fun fetchHistory() {
-                                isLoading = true
-                                coroutineScope.launch {
-                                    try {
-                                        historyList = RetrofitClient.apiService.getHistory(currentCookie)
-                                    } catch (e: retrofit2.HttpException) {
-                                        if (e.code() == 401 || e.code() == 403) forceLogout()
-                                    } catch (e: Exception) {
-                                        Toast.makeText(this@MainActivity, "Помилка завантаження історії", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        isLoading = false
-                                    }
-                                }
-                            }
-
-                            LaunchedEffect(Unit) { fetchHistory() }
-
-                            HistoryScreen(
-                                history = historyList,
-                                isLoading = isLoading,
-                                onBack = { navController.popBackStack() },
-                                onRefresh = { fetchHistory() }
-                            )
-                        }
-
-                        // РОУТ 5: ПРОФІЛЬ КУР'ЄРА
-                        composable("profile") {
-                            var profileData by remember { mutableStateOf<CourierProfile?>(null) }
-                            var motivatorsList by remember { mutableStateOf<List<Motivator>>(emptyList()) }
-                            var isLoading by remember { mutableStateOf(true) }
-                            val currentCookie = sharedPref.getString("cookie", "") ?: ""
-
-                            LaunchedEffect(Unit) {
-                                coroutineScope.launch {
-                                    try {
-                                        // Одночасне завантаження профілю та мотиваторів
-                                        val profileTask = launch { profileData = RetrofitClient.apiService.getProfile(currentCookie) }
-                                        val motivatorsTask = launch {
-                                            try {
-                                                motivatorsList = RetrofitClient.apiService.getMotivators(currentCookie)
-                                            } catch (e: Exception) {
-                                                Log.e("Motivators", "Помилка завантаження мотиваторів: ${e.message}")
+                        // --- ГЛОБАЛЬНЕ ВСПЛИВАЮЧЕ ВІКНО ПЕРСОНАЛЬНОГО ЗАМОВЛЕННЯ ---
+                        directOffer?.let { offer ->
+                            DirectOfferDialog(
+                                offer = offer,
+                                isLoading = isDirectOfferLoading,
+                                onAccept = {
+                                    isDirectOfferLoading = true
+                                    coroutineScope.launch {
+                                        try {
+                                            val cookie = sharedPref.getString("cookie", "") ?: ""
+                                            val response = RetrofitClient.apiService.acceptOrder(cookie, offer.id)
+                                            if (response.isSuccessful) {
+                                                directOffer = null
+                                                // Переходимо в активні замовлення
+                                                navController.navigate("active_order") { popUpTo("orders") { inclusive = true } }
+                                            } else {
+                                                Toast.makeText(this@MainActivity, "Замовлення вже недоступне", Toast.LENGTH_SHORT).show()
+                                                directOffer = null
                                             }
+                                        } catch (e: Exception) {
+                                            Toast.makeText(this@MainActivity, "Помилка мережі", Toast.LENGTH_SHORT).show()
+                                            directOffer = null
+                                        } finally {
+                                            isDirectOfferLoading = false
                                         }
-
-                                        profileTask.join()
-                                        motivatorsTask.join()
-
-                                    } catch (e: retrofit2.HttpException) {
-                                        if (e.code() == 401 || e.code() == 403) forceLogout()
-                                    } catch (e: Exception) {
-                                        Toast.makeText(this@MainActivity, "Помилка завантаження профілю", Toast.LENGTH_SHORT).show()
-                                    } finally {
-                                        isLoading = false
+                                    }
+                                },
+                                onDecline = {
+                                    isDirectOfferLoading = true
+                                    coroutineScope.launch {
+                                        try {
+                                            val cookie = sharedPref.getString("cookie", "") ?: ""
+                                            RetrofitClient.apiService.declineDirectOrder(cookie, offer.id)
+                                        } catch (e: Exception) {}
+                                        finally {
+                                            directOffer = null
+                                            isDirectOfferLoading = false
+                                        }
                                     }
                                 }
-                            }
-
-                            ProfileScreen(
-                                profile = profileData,
-                                motivators = motivatorsList,
-                                isLoading = isLoading,
-                                onBack = { navController.popBackStack() },
-                                onLogout = { forceLogout(isExplicitLogout = true) }
                             )
                         }
                     }

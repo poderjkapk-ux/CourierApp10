@@ -23,6 +23,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -1309,6 +1310,8 @@ fun OrderCard(order: OpenOrder, onAcceptClick: (Int, () -> Unit) -> Unit) {
 @Composable
 fun ActiveOrderScreen(
     job: ActiveJobDetail,
+    activeJobsList: List<ActiveJobSummary>, // ДОДАНО
+    onJobSelected: (Int) -> Unit,           // ДОДАНО
     cookie: String,
     onArrivedPickup: (Int) -> Unit,
     onUpdateStatus: (Int, String) -> Unit,
@@ -1349,6 +1352,35 @@ fun ActiveOrderScreen(
                         }
                     }
                 )
+
+                // --- НОВИЙ БЛОК: МУЛЬТИ-ЗАМОВЛЕННЯ ---
+                if (activeJobsList.size > 1) {
+                    LazyRow(
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 4.dp),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        items(activeJobsList) { summary ->
+                            val isSelected = summary.id == job.id
+                            FilterChip(
+                                selected = isSelected,
+                                onClick = { onJobSelected(summary.id) },
+                                label = { Text("📦 #${summary.id} ${summary.partnerName}", fontWeight = FontWeight.Bold) },
+                                colors = FilterChipDefaults.filterChipColors(
+                                    selectedContainerColor = AppColors.Primary,
+                                    selectedLabelColor = Color.White,
+                                    containerColor = AppColors.Background
+                                ),
+                                border = FilterChipDefaults.filterChipBorder(
+                                    borderColor = if (isSelected) AppColors.Primary else Color.LightGray,
+                                    enabled = true,
+                                    selected = isSelected
+                                ),
+                                shape = RoundedCornerShape(16.dp)
+                            )
+                        }
+                    }
+                }
+                // ---------------------------------------
 
                 TabRow(
                     selectedTabIndex = selectedTabIndex,
@@ -2570,4 +2602,77 @@ fun formatDateUI(dateZ: String?): String {
     } catch (e: Exception) {
         "-"
     }
+}
+
+// ==========================================
+// 7. ПЕРСОНАЛЬНІ ЗАМОВЛЕННЯ (Direct Offers)
+// ==========================================
+@Composable
+fun DirectOfferDialog(
+    offer: OpenOrder,
+    onAccept: () -> Unit,
+    onDecline: () -> Unit,
+    isLoading: Boolean
+) {
+    AlertDialog(
+        onDismissRequest = { }, // Блокуємо закриття по кліку поза вікном
+        containerColor = AppColors.Surface,
+        shape = RoundedCornerShape(24.dp),
+        title = {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Icon(Icons.Default.LocalFireDepartment, contentDescription = null, tint = AppColors.Warning, modifier = Modifier.size(28.dp))
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Ексклюзив!", fontWeight = FontWeight.ExtraBold, color = AppColors.TextPrimary, fontSize = 22.sp)
+            }
+        },
+        text = {
+            Column {
+                Text("Заклад пропонує вам ще одне замовлення попутно. Бажаєте взяти?", fontSize = 15.sp, color = AppColors.TextSecondary)
+                Spacer(modifier = Modifier.height(16.dp))
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = AppColors.Background),
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(modifier = Modifier.padding(16.dp)) {
+                        Text(offer.restaurantName, fontWeight = FontWeight.Bold, fontSize = 18.sp, color = AppColors.TextPrimary)
+                        Text(offer.dropoffAddress, fontSize = 14.sp, color = AppColors.TextSecondary, modifier = Modifier.padding(top = 4.dp))
+
+                        Spacer(modifier = Modifier.height(16.dp))
+                        HorizontalDivider(color = Color.LightGray.copy(alpha = 0.5f))
+                        Spacer(modifier = Modifier.height(12.dp))
+
+                        Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+                            Text("Ваш дохід:", fontWeight = FontWeight.SemiBold, fontSize = 14.sp, color = AppColors.TextSecondary)
+                            Text("+${offer.fee} ₴", fontWeight = FontWeight.Black, fontSize = 20.sp, color = AppColors.Secondary)
+                        }
+                    }
+                }
+            }
+        },
+        confirmButton = {
+            Button(
+                onClick = onAccept,
+                enabled = !isLoading,
+                colors = ButtonDefaults.buttonColors(containerColor = AppColors.Secondary),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().height(48.dp)
+            ) {
+                if (isLoading) CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                else Text("🔥 Прийняти", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            }
+        },
+        dismissButton = {
+            OutlinedButton(
+                onClick = onDecline,
+                enabled = !isLoading,
+                border = BorderStroke(1.dp, AppColors.Error.copy(alpha = 0.5f)),
+                colors = ButtonDefaults.outlinedButtonColors(contentColor = AppColors.Error),
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.fillMaxWidth().padding(bottom = 8.dp)
+            ) {
+                Text("Відмовитись", fontWeight = FontWeight.Bold)
+            }
+        }
+    )
 }
