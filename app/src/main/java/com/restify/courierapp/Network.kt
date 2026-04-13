@@ -28,7 +28,6 @@ import retrofit2.http.*
 // 1. МОДЕЛІ ДАНИХ (Data Classes)
 // ==========================================
 
-// Безпечний пустий клас для POST-запитів, який не видаляється системою стиснення
 class EmptyRequest
 
 data class Announcement(
@@ -38,7 +37,6 @@ data class Announcement(
     val style: String
 )
 
-// Модель для Мотиваторів (Цілей)
 data class Motivator(
     val id: Int,
     val title: String,
@@ -66,10 +64,9 @@ data class OpenOrder(
     @SerializedName("payment_type") val paymentType: String,
     @SerializedName("is_return") val isReturn: Boolean,
     val comment: String?,
-    @SerializedName("estimated_ready_at") val readyAt: String? // ДОДАНО ДЛЯ ТАЙМЕРІВ
+    @SerializedName("estimated_ready_at") val readyAt: String?
 )
 
-// --- НОВІ МОДЕЛІ ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ ---
 data class ActiveJobSummary(
     val id: Int,
     val status: String,
@@ -84,7 +81,6 @@ data class ActiveJobsListResponse(
     val active: Boolean,
     val jobs: List<ActiveJobSummary>
 )
-// ----------------------------------------
 
 data class ActiveJobResponse(
     val active: Boolean,
@@ -96,7 +92,7 @@ data class ActiveJobDetail(
     val status: String,
     @SerializedName("server_status") val serverStatus: String,
     @SerializedName("is_ready") val isReady: Boolean,
-    @SerializedName("estimated_ready_at") val readyAt: String?, // ДОДАНО ДЛЯ ТАЙМЕРІВ
+    @SerializedName("estimated_ready_at") val readyAt: String?,
 
     @SerializedName("assigned_at") val assignedAt: String?,
     @SerializedName("picked_up_at") val pickedUpAt: String?,
@@ -143,7 +139,7 @@ data class HistoryOrder(
     val address: String,
     val price: Double,
     val status: String,
-    val commission: Double? = 0.0 // <- ДОДАНО ПОЛЕ КОМІСІЇ
+    val commission: Double? = 0.0
 )
 
 data class CourierProfile(
@@ -206,18 +202,22 @@ interface ApiService {
         @Query("lon") lon: Double
     ): List<OpenOrder>
 
-    // Оновлено: додано job_id для вибору конкретного замовлення
     @GET("/api/courier/active_job")
     suspend fun getActiveJob(
         @Header("Cookie") cookie: String,
         @Query("job_id") jobId: Int? = null
     ): ActiveJobResponse
 
-    // Оновлено: додано отримання списку всіх активних замовлень
     @GET("/api/courier/active_jobs")
     suspend fun getActiveJobs(
         @Header("Cookie") cookie: String
     ): ActiveJobsListResponse
+
+    // ---> ДОБАВЛЕННЫЙ ЭНДПОИНТ ДЛЯ ПРОВЕРКИ ПЕРСОНАЛЬНЫХ ЗАКАЗОВ <---
+    @GET("/api/courier/direct_offers")
+    suspend fun getDirectOffers(
+        @Header("Cookie") cookie: String
+    ): List<OpenOrder>
 
     @FormUrlEncoded
     @POST("/api/courier/accept_order")
@@ -226,7 +226,6 @@ interface ApiService {
         @Field("job_id") jobId: Int
     ): retrofit2.Response<StatusResponse>
 
-    // Оновлено: додано відмову від персонального замовлення
     @FormUrlEncoded
     @POST("/api/courier/decline_direct_order")
     suspend fun declineDirectOrder(
@@ -318,7 +317,6 @@ interface ApiService {
     @GET("/api/check-update/courier")
     suspend fun checkUpdate(): retrofit2.Response<AppUpdateResponse>
 
-    // --- СИСТЕМА ОГОЛОШЕНЬ ---
     @GET("/api/courier/announcements")
     suspend fun getAnnouncements(
         @Header("Cookie") cookie: String
@@ -329,16 +327,12 @@ interface ApiService {
         @Header("Cookie") cookie: String,
         @Path("ann_id") annId: Int
     ): StatusResponse
-    // -------------------------
 
-    // --- СИСТЕМА МОТИВАТОРІВ ---
     @GET("/api/courier/motivators")
     suspend fun getMotivators(
         @Header("Cookie") cookie: String
     ): List<Motivator>
-    // ---------------------------
 
-    // --- СЛУЖБА ПІДТРИМКИ (ЗВОРОТНИЙ ЗВ'ЯЗОК) ---
     @FormUrlEncoded
     @POST("/api/feedback")
     suspend fun sendFeedback(
@@ -347,24 +341,21 @@ interface ApiService {
         @Field("phone") phone: String,
         @Field("message") message: String
     ): retrofit2.Response<StatusResponse>
-    // --------------------------------------------
 }
 
 // ==========================================
-// 3. МЕНЕДЖЕР WEBSOCKET З АВТО-РЕКОНЕКТОМ ТА ПІНГОМ
+// 3. МЕНЕДЖЕР WEBSOCKET
 // ==========================================
 
 class WebSocketManager(private val client: OkHttpClient) {
     private var webSocket: WebSocket? = null
 
-    // Flow для прослуховування вхідних повідомлень у UI
     private val _messages = MutableSharedFlow<String>(extraBufferCapacity = 10)
     val messages = _messages.asSharedFlow()
 
     private var currentCookie: String? = null
     private var isIntentionallyClosed = false
 
-    // Корутина для фонового пінгу
     private val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
     private var pingJob: Job? = null
 
@@ -401,11 +392,9 @@ class WebSocketManager(private val client: OkHttpClient) {
                 this@WebSocketManager.webSocket = null
                 stopPingJob()
 
-                // Якщо закрили не ми і код НЕ пов'язаний з помилкою авторизації (1008) або нормальним закриттям (1000)
                 if (!isIntentionallyClosed && code != 1008 && code != 1000) {
                     scheduleReconnect()
                 } else if (code == 1008) {
-                    // Сервер примусово розірвав з'єднання через права доступу (Policy Violation)
                     _messages.tryEmit("{\"type\": \"auth_error\"}")
                 }
             }
@@ -417,14 +406,10 @@ class WebSocketManager(private val client: OkHttpClient) {
 
                 if (!isIntentionallyClosed) {
                     val httpCode = response?.code() ?: 0
-
-                    // Перевіряємо, чи не викликана помилка простроченою сесією (401 або 403)
                     if (httpCode == 401 || httpCode == 403) {
                         Log.e("WebSocket", "Auth failed ($httpCode). Stopping reconnect spam.")
-                        // Відправляємо фейкове повідомлення в UI для негайного логауту
                         _messages.tryEmit("{\"type\": \"auth_error\"}")
                     } else {
-                        // Якщо це просто обрив інтернету – пробуємо перепідключитись
                         scheduleReconnect()
                     }
                 }
@@ -436,7 +421,7 @@ class WebSocketManager(private val client: OkHttpClient) {
         pingJob?.cancel()
         pingJob = scope.launch {
             while (isActive) {
-                delay(15000) // Шлемо пінг кожні 15 секунд
+                delay(15000)
                 sendPing()
             }
         }
@@ -449,7 +434,7 @@ class WebSocketManager(private val client: OkHttpClient) {
 
     private fun scheduleReconnect() {
         scope.launch {
-            delay(5000) // Чекаємо 5 секунд перед спробою реконекту
+            delay(5000)
             if (!isIntentionallyClosed && webSocket == null) {
                 Log.d("WebSocket", "Attempting to reconnect...")
                 startConnection()
@@ -467,7 +452,6 @@ class WebSocketManager(private val client: OkHttpClient) {
     }
 
     fun sendPing() {
-        // Відправляємо просту строку "ping", як це очікує сервер
         webSocket?.send("ping")
     }
 

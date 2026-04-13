@@ -41,6 +41,7 @@ import com.google.android.gms.location.LocationServices
 import com.google.firebase.messaging.FirebaseMessaging
 import com.google.gson.Gson
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.suspendCancellableCoroutine
 import org.json.JSONObject
@@ -51,7 +52,6 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var fusedLocationClient: FusedLocationProviderClient
 
-    // Функція для запуску служби геолокації
     private fun startLocationService() {
         val serviceIntent = Intent(this, LocationTracker::class.java)
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -61,13 +61,11 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // Допоміжна функція для отримання координат (безпечно для корутин)
     @SuppressLint("MissingPermission")
     suspend fun getLastKnownLocation(): Location? {
         return suspendCancellableCoroutine { cont ->
             fusedLocationClient.lastLocation
                 .addOnSuccessListener { location ->
-                    // ЗАХИСТ ВІД КРАШУ: Перевіряємо, чи корутина ще активна перед тим як повернути результат
                     if (cont.isActive) {
                         cont.resume(location)
                     }
@@ -84,10 +82,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
-        // Ініціалізація OpenStreetMap (потрібно для відображення карти)
         Configuration.getInstance().userAgentValue = packageName
-
-        // Ініціалізація клієнта геолокації
         fusedLocationClient = LocationServices.getFusedLocationProviderClient(this)
 
         val sharedPref = getSharedPreferences("CourierPrefs", Context.MODE_PRIVATE)
@@ -102,19 +97,51 @@ class MainActivity : ComponentActivity() {
                     val coroutineScope = rememberCoroutineScope()
                     val savedCookie = sharedPref.getString("cookie", null)
 
-                    // ГЛОБАЛЬНА ЗМІННА СТАТУСУ: Тепер статус не втрачається при переходах!
                     var isOnline by rememberSaveable { mutableStateOf(false) }
 
                     // ГЛОБАЛЬНИЙ СТАН: Персональне замовлення (Direct Offer)
                     var directOffer by remember { mutableStateOf<OpenOrder?>(null) }
                     var isDirectOfferLoading by remember { mutableStateOf(false) }
 
-                    // --- Глобальна функція для примусового логауту або виходу з акаунту ---
+                    // ---> НОВА ФУНКЦІЯ: Надійна перевірка персональних замовлень через REST API
+                    fun checkDirectOffers() {
+                        val currentCookie = sharedPref.getString("cookie", null) ?: return
+                        coroutineScope.launch(Dispatchers.IO) {
+                            try {
+                                val offers = RetrofitClient.apiService.getDirectOffers(currentCookie)
+                                launch(Dispatchers.Main) {
+                                    directOffer = offers.firstOrNull()
+                                }
+                            } catch (e: Exception) {
+                                Log.e("DirectOffers", "Error fetching direct offers", e)
+                            }
+                        }
+                    }
+
+                    // ---> СПОСТЕРІГАЧ ЖИТТЄВОГО ЦИКЛУ: Перевіряємо замовлення щоразу, коли додаток відкривається
+                    val globalLifecycleOwner = LocalLifecycleOwner.current
+                    DisposableEffect(globalLifecycleOwner) {
+                        val observer = LifecycleEventObserver { _, event ->
+                            if (event == Lifecycle.Event.ON_RESUME) {
+                                checkDirectOffers()
+                            }
+                        }
+                        globalLifecycleOwner.lifecycle.addObserver(observer)
+                        onDispose { globalLifecycleOwner.lifecycle.removeObserver(observer) }
+                    }
+
+                    // ---> ФОНОВИЙ ОПРОС: щоб точно нічого не пропустити
+                    LaunchedEffect(Unit) {
+                        while (true) {
+                            delay(15000) // Раз на 15 секунд перевіряємо
+                            checkDirectOffers()
+                        }
+                    }
+
                     fun forceLogout(isExplicitLogout: Boolean = false) {
                         coroutineScope.launch(Dispatchers.IO) {
                             val currentCookie = sharedPref.getString("cookie", null)
 
-                            // Якщо курьєр натиснув "Вийти" і він зараз онлайн — перемикаємо статус на сервері
                             if (isExplicitLogout && currentCookie != null && isOnline) {
                                 try {
                                     RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
@@ -123,14 +150,12 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // Повертаємось у головний потік для оновлення UI
                             launch(Dispatchers.Main) {
-                                isOnline = false // Обов'язково скидаємо локальний стан!
+                                isOnline = false
                                 sharedPref.edit().remove("cookie").apply()
                                 RetrofitClient.webSocketManager.disconnect()
                                 stopService(Intent(this@MainActivity, LocationTracker::class.java))
 
-                                // Показуємо тост тільки якщо це викид (наприклад, 401), а не добровільний вихід
                                 if (!isExplicitLogout) {
                                     Toast.makeText(this@MainActivity, "Сесія закінчилась, увійдіть знову", Toast.LENGTH_LONG).show()
                                 }
@@ -142,26 +167,20 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // --- Управління життєвим циклом WebSocket та FCM-токеном ---
                     LaunchedEffect(Unit) {
                         if (savedCookie != null) {
-                            // Підключаємо WebSocket
                             RetrofitClient.webSocketManager.connect(savedCookie)
 
-                            // Відправляємо FCM-токен на сервер при кожному старті додатку
                             FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                                 if (task.isSuccessful) {
                                     val token = task.result
                                     coroutineScope.launch {
                                         try {
                                             RetrofitClient.apiService.sendFcmToken(savedCookie, token)
-                                            Log.d("FCM_TOKEN", "Токен успішно оновлено при старті: $token")
                                         } catch (e: Exception) {
                                             Log.e("FCM_TOKEN", "Помилка відправки токена при старті: ${e.message}")
                                         }
                                     }
-                                } else {
-                                    Log.e("FCM_TOKEN", "Не вдалося отримати токен від Firebase", task.exception)
                                 }
                             }
                         }
@@ -173,7 +192,7 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // --- ГЛОБАЛЬНЕ ПРОСЛУХОВУВАННЯ WEBSOCKET (ДЛЯ ПЕРСОНАЛЬНИХ ЗАМОВЛЕНЬ) ---
+                    // --- ГЛОБАЛЬНЕ ПРОСЛУХОВУВАННЯ WEBSOCKET ---
                     LaunchedEffect(Unit) {
                         RetrofitClient.webSocketManager.messages.collect { messageJson ->
                             try {
@@ -183,18 +202,22 @@ class MainActivity : ComponentActivity() {
                                 if (type == "auth_error") {
                                     forceLogout()
                                 } else if (type == "direct_offer") {
-                                    // БЕЗПЕЧНИЙ ПАРСИНГ: шукаємо дані в "data", "order" або беремо сам json
-                                    val orderObj = json.optJSONObject("data") ?: json.optJSONObject("order") ?: json.optJSONObject("job") ?: json
-                                    directOffer = Gson().fromJson(orderObj.toString(), OpenOrder::class.java)
+                                    try {
+                                        // Намагаємось одразу розпарсити через WebSocket
+                                        val orderObj = json.optJSONObject("data") ?: json.optJSONObject("order") ?: json.optJSONObject("job") ?: json
+                                        directOffer = Gson().fromJson(orderObj.toString(), OpenOrder::class.java)
+                                    } catch (e: Exception) {
+                                        Log.e("WS", "Помилка парсингу direct_offer. Запит через API...", e)
+                                        // Якщо парсинг впав — страхуємось і робимо запит до сервера
+                                        checkDirectOffers()
+                                    }
                                 }
                             } catch (e: Exception) {
                                 e.printStackTrace()
                             }
                         }
                     }
-                    // ---------------------------------------------------
 
-                    // БЛОК ЗАПИТУ ДОЗВОЛІВ (GPS та Сповіщення)
                     val permissionsToRequest = mutableListOf(
                         Manifest.permission.ACCESS_FINE_LOCATION,
                         Manifest.permission.ACCESS_COARSE_LOCATION
@@ -205,7 +228,6 @@ class MainActivity : ComponentActivity() {
 
                     val permissionsState = rememberMultiplePermissionsState(permissions = permissionsToRequest)
 
-                    // Перевіряємо чи є хоча б якийсь дозвіл на локацію (щоб відмова від пушів не блокувала роботу)
                     val hasLocationPermission = permissionsState.permissions.any {
                         (it.permission == Manifest.permission.ACCESS_FINE_LOCATION ||
                                 it.permission == Manifest.permission.ACCESS_COARSE_LOCATION) &&
@@ -214,19 +236,16 @@ class MainActivity : ComponentActivity() {
 
                     var showLocationDisclosure by rememberSaveable { mutableStateOf(false) }
 
-                    // --- Глобальний контроль GPS: автоматично запускаємо/зупиняємо сервіс ---
                     LaunchedEffect(permissionsState.allPermissionsGranted, isOnline, hasLocationPermission) {
                         if (!permissionsState.allPermissionsGranted) {
                             val hasSeenDisclosure = sharedPref.getBoolean("has_seen_location_disclosure", false)
                             if (!hasSeenDisclosure) {
-                                // Показуємо наше власне пояснення перед системним запитом
                                 showLocationDisclosure = true
                             } else {
                                 permissionsState.launchMultiplePermissionRequest()
                             }
                         }
 
-                        // Запускаємо сервіс, якщо є дозвіл САМЕ на локацію, незалежно від дозволу на сповіщення
                         if (hasLocationPermission) {
                             if (isOnline) {
                                 startLocationService()
@@ -238,10 +257,9 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    // Діалогове вікно (Prominent Disclosure) для Google Play
                     if (showLocationDisclosure) {
                         AlertDialog(
-                            onDismissRequest = { /* Не закриваємо по кліку поза вікном */ },
+                            onDismissRequest = { },
                             title = { Text(text = "Доступ до геолокації") },
                             text = {
                                 Text(text = "Додаток CourierApp збирає дані про ваше місцезнаходження у фоновому режимі.\n\nЦе необхідно для того, щоб розраховувати відстань до клієнта та інформувати заклади про ваше наближення, навіть коли додаток згорнуто або не використовується.")
@@ -265,7 +283,6 @@ class MainActivity : ComponentActivity() {
                         )
                     }
 
-                    // Визначаємо стартовий екран з урахуванням онбордингу
                     val startDestination = if (isFirstLaunch()) {
                         "onboarding"
                     } else if (savedCookie != null) {
@@ -277,7 +294,6 @@ class MainActivity : ComponentActivity() {
                     Box(modifier = Modifier.fillMaxSize()) {
                         NavHost(navController = navController, startDestination = startDestination) {
 
-                            // РОУТ 0: ОНБОРДИНГ
                             composable("onboarding") {
                                 OnboardingScreen(
                                     onFinish = {
@@ -289,7 +305,6 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // РОУТ 1: ЛОГІН
                             composable("login") {
                                 var isLoading by remember { mutableStateOf(false) }
                                 var errorMessage by remember { mutableStateOf<String?>(null) }
@@ -313,20 +328,15 @@ class MainActivity : ComponentActivity() {
                                                         val cookieValue = tokenCookie.split(";")[0]
                                                         sharedPref.edit().putString("cookie", cookieValue).apply()
 
-                                                        // Підключаємо WebSocket одразу після успішного входу
                                                         RetrofitClient.webSocketManager.connect(cookieValue)
 
-                                                        // Відправляємо FCM токен після успішного логіну
                                                         FirebaseMessaging.getInstance().token.addOnCompleteListener { task ->
                                                             if (task.isSuccessful) {
                                                                 val token = task.result
                                                                 coroutineScope.launch {
                                                                     try {
                                                                         RetrofitClient.apiService.sendFcmToken(cookieValue, token)
-                                                                        Log.d("FCM_TOKEN", "Токен успішно відправлено після логіну: $token")
-                                                                    } catch (e: Exception) {
-                                                                        Log.e("FCM_TOKEN", "Помилка відправки токена після логіну: ${e.message}")
-                                                                    }
+                                                                    } catch (e: Exception) {}
                                                                 }
                                                             }
                                                         }
@@ -350,7 +360,6 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // РОУТ 1.5: РЕЄСТРАЦІЯ
                             composable("register") {
                                 RegistrationScreen(
                                     onRegisterSuccess = {
@@ -365,7 +374,6 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // РОУТ 2: СПИСОК ЗАМОВЛЕНЬ
                             composable("orders") {
                                 var ordersList by remember { mutableStateOf<List<OpenOrder>>(emptyList()) }
                                 var announcementsList by remember { mutableStateOf<List<Announcement>>(emptyList()) }
@@ -373,17 +381,14 @@ class MainActivity : ComponentActivity() {
 
                                 val currentCookie = sharedPref.getString("cookie", "") ?: ""
 
-                                // --- СТАН ДЛЯ ВІДСТЕЖЕННЯ УВІМКНЕНОГО GPS ---
                                 val context = LocalContext.current
                                 val locationManager = context.getSystemService(Context.LOCATION_SERVICE) as LocationManager
                                 var isGpsEnabled by remember { mutableStateOf(true) }
 
-                                // параметри для "тихого" оновлення
                                 fun fetchData(isSilent: Boolean = false) {
                                     if (!isSilent) isLoading = true
                                     coroutineScope.launch {
                                         try {
-                                            // --- ОНОВЛЕННЯ ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ ---
                                             val activeJobRes = RetrofitClient.apiService.getActiveJobs(currentCookie)
                                             if (activeJobRes.active && activeJobRes.jobs.isNotEmpty()) {
                                                 navController.navigate("active_order") {
@@ -392,26 +397,19 @@ class MainActivity : ComponentActivity() {
                                                 return@launch
                                             }
 
-                                            // Завантажуємо оголошення
                                             try {
                                                 announcementsList = RetrofitClient.apiService.getAnnouncements(currentCookie)
-                                            } catch (e: Exception) {
-                                                Log.e("Announcements", "Failed to load announcements: ${e.message}")
-                                            }
+                                            } catch (e: Exception) { }
 
-                                            // Отримуємо реальні координати
                                             var currentLat = 46.4825
                                             var currentLon = 30.7233
 
                                             if (hasLocationPermission) {
                                                 val location = getLastKnownLocation()
                                                 if (location != null) {
-                                                    // --- ЗАХИСТ ВІД РЕБ (GPS SPOOFING) ---
                                                     if (location.latitude > 45.0 && location.latitude < 48.0 && location.longitude > 29.0 && location.longitude < 32.0) {
                                                         currentLat = location.latitude
                                                         currentLon = location.longitude
-                                                    } else {
-                                                        Log.w("GPS_FILTER", "РЕБ або збій! Фейкова локація проігнорована: ${location.latitude}, ${location.longitude}")
                                                     }
                                                 }
                                             }
@@ -422,13 +420,8 @@ class MainActivity : ComponentActivity() {
                                                 lon = currentLon
                                             )
                                         } catch (e: retrofit2.HttpException) {
-                                            if (e.code() == 401 || e.code() == 403) {
-                                                forceLogout()
-                                            } else if (!isSilent) {
-                                                Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
-                                            }
+                                            if (e.code() == 401 || e.code() == 403) forceLogout()
                                         } catch (e: Exception) {
-                                            if (!isSilent) Toast.makeText(this@MainActivity, "Помилка завантаження", Toast.LENGTH_SHORT).show()
                                         } finally {
                                             if (!isSilent) isLoading = false
                                         }
@@ -452,30 +445,25 @@ class MainActivity : ComponentActivity() {
                                     onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
                                 }
 
-                                // При відкритті екрану завантажуємо реальний профіль і статус
                                 LaunchedEffect(Unit) {
                                     coroutineScope.launch {
                                         try {
                                             val profile = RetrofitClient.apiService.getProfile(currentCookie)
-                                            isOnline = profile.isOnline // Це автоматично запустить/зупинить LocationTracker
+                                            isOnline = profile.isOnline
                                         } catch (e: retrofit2.HttpException) {
                                             if (e.code() == 401 || e.code() == 403) forceLogout()
-                                        } catch (e: Exception) {
-                                            Log.e("SYNC", "Не вдалося отримати профіль для перевірки статусу")
-                                        }
+                                        } catch (e: Exception) { }
                                     }
                                     fetchData(isSilent = false)
                                 }
 
-                                // Фонове тихе оновлення
                                 LaunchedEffect(Unit) {
                                     while (true) {
-                                        kotlinx.coroutines.delay(30000)
+                                        delay(30000)
                                         fetchData(isSilent = true)
                                     }
                                 }
 
-                                // Слухаємо WebSocket події для миттєвого оновлення списку або логауту
                                 LaunchedEffect(Unit) {
                                     RetrofitClient.webSocketManager.messages.collect { messageJson ->
                                         try {
@@ -483,13 +471,11 @@ class MainActivity : ComponentActivity() {
                                             val type = json.getString("type")
 
                                             if (type == "auth_error") {
-                                                forceLogout() // <--- Обробка помилки 401/403 від WebSocket
+                                                forceLogout()
                                             } else if (type == "new_order" || type == "job_update" || type == "job_ready") {
-                                                fetchData(isSilent = true) // Оновлюємо список тихо
+                                                fetchData(isSilent = true)
                                             }
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                        }
+                                        } catch (e: Exception) { }
                                     }
                                 }
 
@@ -498,21 +484,19 @@ class MainActivity : ComponentActivity() {
                                     announcements = announcementsList,
                                     isLoading = isLoading,
                                     isOnline = isOnline,
-                                    isGpsEnabled = isGpsEnabled, // ПЕРЕДАЄМО СТАТУС GPS НА ЕКРАН
+                                    isGpsEnabled = isGpsEnabled,
                                     onNavigateToHistory = {
                                         navController.navigate("history")
                                     },
                                     onNavigateToProfile = {
-                                        navController.navigate("profile") // Перехід на екран профілю
+                                        navController.navigate("profile")
                                     },
                                     onDismissAnnouncement = { annId ->
                                         announcementsList = announcementsList.filter { it.id != annId }
                                         coroutineScope.launch {
                                             try {
                                                 RetrofitClient.apiService.dismissAnnouncement(currentCookie, annId)
-                                            } catch (e: Exception) {
-                                                Log.e("Announcements", "Failed to dismiss: ${e.message}")
-                                            }
+                                            } catch (e: Exception) { }
                                         }
                                     },
                                     onToggleStatus = { _ ->
@@ -521,11 +505,8 @@ class MainActivity : ComponentActivity() {
                                                 val response = RetrofitClient.apiService.toggleStatus(currentCookie, EmptyRequest())
                                                 isOnline = response.isOnline
                                             } catch (e: retrofit2.HttpException) {
-                                                if (e.code() == 401 || e.code() == 403) {
-                                                    forceLogout()
-                                                } else {
-                                                    Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
-                                                }
+                                                if (e.code() == 401 || e.code() == 403) forceLogout()
+                                                else Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
                                             } catch (e: Exception) {
                                                 Toast.makeText(this@MainActivity, "Помилка зв'язку з сервером", Toast.LENGTH_SHORT).show()
                                             }
@@ -552,7 +533,6 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // РОУТ 3: АКТИВНІ ЗАМОВЛЕННЯ (ОНОВЛЕНО ДЛЯ МУЛЬТИ-ЗАМОВЛЕНЬ)
                             composable("active_order") {
                                 var activeJob by remember { mutableStateOf<ActiveJobDetail?>(null) }
                                 var activeJobsList by remember { mutableStateOf<List<ActiveJobSummary>>(emptyList()) }
@@ -594,7 +574,6 @@ class MainActivity : ComponentActivity() {
 
                                 LaunchedEffect(Unit) { fetchActiveData() }
 
-                                // Слухаємо WebSocket події
                                 LaunchedEffect(Unit) {
                                     RetrofitClient.webSocketManager.messages.collect { messageJson ->
                                         try {
@@ -606,9 +585,7 @@ class MainActivity : ComponentActivity() {
                                             } else if (type == "job_update" || type == "job_ready" || type == "new_order") {
                                                 fetchActiveData()
                                             }
-                                        } catch (e: Exception) {
-                                            e.printStackTrace()
-                                        }
+                                        } catch (e: Exception) { }
                                     }
                                 }
 
@@ -636,7 +613,6 @@ class MainActivity : ComponentActivity() {
                                 }
                             }
 
-                            // РОУТ 4: ІСТОРІЯ ЗАМОВЛЕНЬ
                             composable("history") {
                                 var historyList by remember { mutableStateOf<List<HistoryOrder>>(emptyList()) }
                                 var isLoading by remember { mutableStateOf(true) }
@@ -667,7 +643,6 @@ class MainActivity : ComponentActivity() {
                                 )
                             }
 
-                            // РОУТ 5: ПРОФІЛЬ КУР'ЄРА
                             composable("profile") {
                                 var profileData by remember { mutableStateOf<CourierProfile?>(null) }
                                 var motivatorsList by remember { mutableStateOf<List<Motivator>>(emptyList()) }
@@ -677,14 +652,11 @@ class MainActivity : ComponentActivity() {
                                 LaunchedEffect(Unit) {
                                     coroutineScope.launch {
                                         try {
-                                            // Одночасне завантаження профілю та мотиваторів
                                             val profileTask = launch { profileData = RetrofitClient.apiService.getProfile(currentCookie) }
                                             val motivatorsTask = launch {
                                                 try {
                                                     motivatorsList = RetrofitClient.apiService.getMotivators(currentCookie)
-                                                } catch (e: Exception) {
-                                                    Log.e("Motivators", "Помилка завантаження мотиваторів: ${e.message}")
-                                                }
+                                                } catch (e: Exception) { }
                                             }
 
                                             profileTask.join()
@@ -723,15 +695,16 @@ class MainActivity : ComponentActivity() {
                                             val response = RetrofitClient.apiService.acceptOrder(cookie, offer.id)
                                             if (response.isSuccessful) {
                                                 directOffer = null
-                                                // Переходимо в активні замовлення
                                                 navController.navigate("active_order") { popUpTo("orders") { inclusive = true } }
                                             } else {
                                                 Toast.makeText(this@MainActivity, "Замовлення вже недоступне", Toast.LENGTH_SHORT).show()
                                                 directOffer = null
+                                                checkDirectOffers() // Одразу перевіряємо чи немає іншого
                                             }
                                         } catch (e: Exception) {
                                             Toast.makeText(this@MainActivity, "Помилка мережі", Toast.LENGTH_SHORT).show()
                                             directOffer = null
+                                            checkDirectOffers()
                                         } finally {
                                             isDirectOfferLoading = false
                                         }
@@ -747,6 +720,7 @@ class MainActivity : ComponentActivity() {
                                         finally {
                                             directOffer = null
                                             isDirectOfferLoading = false
+                                            checkDirectOffers() // Якщо відмовились - можливо є інше
                                         }
                                     }
                                 }
@@ -758,7 +732,6 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    // --- ФУНКЦІЇ ДЛЯ КОНТРОЛЮ ПЕРШОГО ЗАПУСКУ (ОНБОРДИНГ) ---
     private fun isFirstLaunch(): Boolean {
         val sharedPreferences = getSharedPreferences("CourierPrefs", Context.MODE_PRIVATE)
         return sharedPreferences.getBoolean("isFirstLaunch", true)

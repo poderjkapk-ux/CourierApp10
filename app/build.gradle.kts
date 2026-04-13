@@ -19,8 +19,8 @@ android {
         // ИСПРАВЛЕНИЕ: Рекомендуется также обновить targetSdk до 36
         targetSdk = 35
 
-        versionCode = 33
-        versionName = "1.6.7"
+        versionCode = 35
+        versionName = "1.7.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
