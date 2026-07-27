@@ -1320,6 +1320,13 @@ fun ActiveOrderScreen(
     var selectedTabIndex by remember { mutableIntStateOf(0) }
     val tabs = listOf("Деталі", "Чат")
 
+    // --- СТАН ДЛЯ МОДАЛКИ СЛУЖБИ ПІДТРИМКИ ---
+    var showSupportDialog by remember { mutableStateOf(false) }
+    var supportText by remember { mutableStateOf("") }
+    var isSupportLoading by remember { mutableStateOf(false) }
+    val coroutineScope = rememberCoroutineScope()
+    val context = LocalContext.current
+
     Scaffold(
         containerColor = AppColors.Background,
         topBar = {
@@ -1410,10 +1417,104 @@ fun ActiveOrderScreen(
     ) { padding ->
         Box(modifier = Modifier.padding(padding).fillMaxSize().background(AppColors.Background)) {
             when (selectedTabIndex) {
-                0 -> OrderDetailsView(job, onArrivedPickup, onUpdateStatus, onRefresh)
+                0 -> OrderDetailsView(
+                    job = job,
+                    onArrivedPickup = onArrivedPickup,
+                    onUpdateStatus = onUpdateStatus,
+                    onRefresh = onRefresh,
+                    onSupportClick = { showSupportDialog = true } // ПЕРЕДАЄМО КЛІК НА КНОПКУ
+                )
                 1 -> ChatView(job.id, cookie)
             }
         }
+    }
+
+    // --- ДІАЛОГ СЛУЖБИ ПІДТРИМКИ ---
+    if (showSupportDialog) {
+        AlertDialog(
+            onDismissRequest = { if (!isSupportLoading) showSupportDialog = false },
+            title = {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(
+                        modifier = Modifier.size(40.dp).background(Color(0xFF6366F1).copy(alpha = 0.15f), CircleShape),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(Icons.Rounded.Info, contentDescription = null, tint = Color(0xFF6366F1))
+                    }
+                    Spacer(modifier = Modifier.width(12.dp))
+                    Text("Служба підтримки", fontWeight = FontWeight.Bold, color = AppColors.TextPrimary, fontSize = 20.sp)
+                }
+            },
+            text = {
+                Column {
+                    Text("Опишіть вашу проблему із замовленням #${job.id}. Ми перевіримо інформацію та допоможемо вам.", fontSize = 14.sp, color = AppColors.TextSecondary)
+                    Spacer(modifier = Modifier.height(16.dp))
+                    OutlinedTextField(
+                        value = supportText,
+                        onValueChange = { supportText = it },
+                        placeholder = { Text("Почніть писати тут...", color = AppColors.TextSecondary) },
+                        modifier = Modifier.fillMaxWidth().height(120.dp),
+                        shape = RoundedCornerShape(16.dp),
+                        colors = OutlinedTextFieldDefaults.colors(
+                            focusedBorderColor = Color(0xFF6366F1),
+                            unfocusedBorderColor = Color.LightGray.copy(alpha = 0.5f),
+                            focusedContainerColor = AppColors.Surface,
+                            unfocusedContainerColor = AppColors.Background.copy(alpha = 0.5f)
+                        ),
+                        maxLines = 5
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        if (supportText.isBlank()) return@Button
+                        coroutineScope.launch {
+                            isSupportLoading = true
+                            try {
+                                val res = RetrofitClient.apiService.sendFeedback(
+                                    role = "Кур'єр",
+                                    name = "Замовлення #${job.id}",
+                                    phone = "-",
+                                    message = "Проблема з замовленням #${job.id}: ${supportText.trim()}"
+                                )
+                                if (res.isSuccessful) {
+                                    Toast.makeText(context, "✅ Дякуємо! Ваше звернення відправлено.", Toast.LENGTH_LONG).show()
+                                    showSupportDialog = false
+                                    supportText = ""
+                                } else {
+                                    Toast.makeText(context, "❌ Помилка сервера. Спробуйте пізніше.", Toast.LENGTH_SHORT).show()
+                                }
+                            } catch (e: Exception) {
+                                Toast.makeText(context, "⚠️ Помилка з'єднання.", Toast.LENGTH_SHORT).show()
+                            } finally {
+                                isSupportLoading = false
+                            }
+                        }
+                    },
+                    enabled = !isSupportLoading && supportText.isNotBlank(),
+                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF6366F1)),
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    if (isSupportLoading) {
+                        CircularProgressIndicator(color = Color.White, modifier = Modifier.size(20.dp), strokeWidth = 2.dp)
+                    } else {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Icon(Icons.Rounded.Send, contentDescription = null, modifier = Modifier.size(18.dp))
+                            Spacer(modifier = Modifier.width(8.dp))
+                            Text("Відправити")
+                        }
+                    }
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showSupportDialog = false }, enabled = !isSupportLoading) {
+                    Text("Скасувати", color = AppColors.TextSecondary)
+                }
+            },
+            containerColor = AppColors.Surface,
+            shape = RoundedCornerShape(24.dp)
+        )
     }
 }
 
@@ -1446,7 +1547,8 @@ fun OrderDetailsView(
     job: ActiveJobDetail,
     onArrivedPickup: (Int) -> Unit,
     onUpdateStatus: (Int, String) -> Unit,
-    onRefresh: () -> Unit
+    onRefresh: () -> Unit,
+    onSupportClick: () -> Unit // ДОДАНО ПАРАМЕТР
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -1732,6 +1834,37 @@ fun OrderDetailsView(
                                     Spacer(modifier = Modifier.width(10.dp))
                                     Text("Маршрут назад", fontWeight = FontWeight.Bold, fontSize = 16.sp)
                                 }
+                            }
+                        }
+                    }
+                }
+
+                // --- НОВА КАРТКА СЛУЖБИ ПІДТРИМКИ В КІНЦІ СПИСКУ ---
+                item {
+                    Card(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(top = 8.dp)
+                            .clickable { onSupportClick() },
+                        shape = RoundedCornerShape(24.dp),
+                        colors = CardDefaults.cardColors(containerColor = Color(0xFF6366F1).copy(alpha = 0.08f)),
+                        border = BorderStroke(1.dp, Color(0xFF6366F1).copy(alpha = 0.3f))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(20.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Box(
+                                modifier = Modifier.size(48.dp).background(Color(0xFF6366F1).copy(alpha = 0.2f), CircleShape),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(Icons.Rounded.Info, contentDescription = "Support", tint = Color(0xFF6366F1), modifier = Modifier.size(24.dp))
+                            }
+                            Spacer(modifier = Modifier.width(16.dp))
+                            Column {
+                                Text("Виникли проблеми?", fontWeight = FontWeight.Bold, color = AppColors.TextPrimary, fontSize = 16.sp)
+                                Spacer(modifier = Modifier.height(2.dp))
+                                Text("Напишіть у службу підтримки", color = AppColors.TextSecondary, fontSize = 13.sp)
                             }
                         }
                     }
